@@ -5,6 +5,12 @@ const I = {
   plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
   chat:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.7A8 8 0 1 1 21 12z"/><path d="M9 11h.01M12 11h.01M15 11h.01"/></svg>',
   pan:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h13a6 6 0 0 1-6 6H9a6 6 0 0 1-6-6z"/><path d="M16 13h5M7 8c0-1 1-1.5 1-2.5S7 4 7 3M11 8c0-1 1-1.5 1-2.5S11 4 11 3"/></svg>',
+  kdial:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="13" r="6.5"/><path d="M12 13l3-3"/><path d="M4 7.5l1 .6M20 7.5l-1 .6M12 2.5v1.2M7 4l.6 1M17 4l-.6 1"/></svg>',
+  kflame:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5c.8 3.6 5.5 5.6 5.5 11a5.5 5.5 0 0 1-11 0c0-2.6 1.3-4.3 2.5-5.4.1 1.7.8 2.9 2 3.5-.5-3.2.1-6.1 1-9.1z"/></svg>',
+  kfan:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1.6"/><path d="M12 10.4c-1-3.4.4-6.4 3-6.4 2.3 0 2.6 3.2-1.5 6.2M13.6 12c3.4-1 6.4.4 6.4 3 0 2.3-3.2 2.6-6.2-1.5M12 13.6c1 3.4-.4 6.4-3 6.4-2.3 0-2.6-3.2 1.5-6.2M10.4 12C7 13 4 11.6 4 9c0-2.3 3.2-2.6 6.2 1.5"/></svg>',
+  knofan:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7 9h10M7 15h10"/></svg>',
+  kno:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M6 6l12 12"/></svg>',
+  kq:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.4M12 16.5h.01"/></svg>',
   logo:'<span class="lg" aria-hidden="true"><b>rt</b><i></i></span>',
   flame:'<svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="flg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb347"/><stop offset=".55" stop-color="#ff7a3d"/><stop offset="1" stop-color="#ff4a43"/></linearGradient></defs><path fill="url(#flg)" d="M12 1.8c.7 3.4 5.3 5.5 5.3 10.8a5.3 5.3 0 0 1-10.6 0c0-2.5 1.2-4.2 2.4-5.3.1 1.6.8 2.8 1.9 3.4-.5-3.1.1-6 1-8.9z"/><path fill="#fff" opacity=".92" d="M12 13.1c1 1.1 2 2.1 2 3.5a2 2 0 0 1-4 0c0-1.3.9-2.4 2-3.5z"/></svg>',
   sparkle:'<svg viewBox="0 0 24 24" fill="currentColor"><path d="M11 2.5l2 5.9 5.9 2-5.9 2-2 5.9-2-5.9-5.9-2 5.9-2z"/><path d="M19 14.5l.9 2.4 2.4.9-2.4.9-.9 2.4-.9-2.4-2.4-.9 2.4-.9z"/></svg>',
@@ -134,7 +140,7 @@ const BANNED_TAGS = /^(easy|quick|simple|family|healthy|delicious|tasty|homemade
 /* ---------- kitchen ---------- */
 const APPL_CHIPS = ["Air fryer", "Microwave", "Food processor", "Stand mixer", "Hand mixer", "Blender", "Slow cooker", "Pressure cooker"];
 const APPL = { oven: "Oven", airfryer: "Air fryer", microwave: "Microwave", foodprocessor: "Food processor", mixer: "Mixer", standmixer: "Stand mixer", handmixer: "Hand mixer", blender: "Blender", stickblender: "Stick blender", slowcooker: "Slow cooker", pressurecooker: "Pressure cooker", toaster: "Toaster", grill: "Grill", thermo: "Thermomix-style" };
-const HOBS = { gas: "Gas hob", induction: "Induction hob", electric: "Electric hob", unsure: "Hob" };
+const HOBS = { gas: "Gas hob", induction: "Induction hob", electric: "Electric hob", numbered: "Hob with numbered controls", unsure: "Hob" };
 const OVENS = { fan: "Fan oven", conventional: "Conventional oven", gas: "Gas oven", unsure: "Oven (type not sure)", none: "No oven" };
 const DEFAULT_KITCHEN = { type: "kitchen", setup: false, appliancesText: "", hobType: "", hobModel: "", dial: "numbers", stoveMax: 9, ovenType: "", weight: "g", liquid: "ml", spoons: true, people: 2, avoid: "", profile: null };
 function heatOf(k) {
@@ -596,7 +602,7 @@ function viewRecipes() {
   const f = (id, l) => `<button class="chip" data-act="filter" data-f="${id}" aria-pressed="${S.filter === id}">${l}</button>`;
   return `<div class="wrap stack" style="padding-block:6px 0">
     ${S.selecting ? "" : `<header class="pagehead"><h1>What are we <em>cooking?</em></h1>${all.length ? `<p class="tnum">${all.length} recipe${all.length === 1 ? "" : "s"} in your book</p>` : ""}</header>`}
-    ${!k.setup && Store.mode !== "loading" && !S.selecting ? `<button class="banner slim" data-act="tab" data-tab="kitchen"><span class="b-ico">${I.pan}</span><span class="b-txt"><b>Set up your kitchen</b><p>So recipes use your hob numbers and appliances</p></span><span class="chev">${I.chev}</span></button>` : ""}
+    ${!k.setup && Store.mode !== "loading" && !S.selecting ? `<button class="banner slim" data-act="tab" data-tab="kitchen"><span class="b-ico">${I.pan}</span><span class="b-txt"><b>Set up your kitchen</b><p>5 quick taps, so recipes say things like “fry on 6”</p></span><span class="chev">${I.chev}</span></button>` : ""}
     ${all.length ? `<div class="search">${I.search}<input class="input" id="q" type="search" placeholder="Search recipes or ingredients" value="${esc(S.search)}" autocomplete="off" enterkeyhint="search"></div>
     <div class="chips" role="group" aria-label="Show">${f("all", "All")}${f("fav", "Favourites")}${f("dinner", "Meals")}${f("dessert", "Desserts")}${f("snack", "Snacks")}</div>` : ""}
     <div id="grid">${gridHtml()}</div>
@@ -734,42 +740,73 @@ function kitchenForm(k) {
   const parts = txt.split(/,\s*/).map(x => x.trim()).filter(Boolean);
   const gadgets = GADGETS.filter(g => parts.some(p => p.toLowerCase() === g.toLowerCase() || (g === "Mixer" && /mixer/i.test(p))));
   const other = parts.filter(p => !gadgets.some(g => g.toLowerCase() === p.toLowerCase()) && !(/mixer/i.test(p) && gadgets.includes("Mixer"))).join(", ");
-  const oldHob = String(k.hob || k.stoveType || "").toLowerCase();
   return {
-    hobType: k.hobType && k.hobType !== "unsure" ? k.hobType : (/induct/.test(oldHob) ? "induction" : /gas/.test(oldHob) ? "gas" : /electric|ceramic/.test(oldHob) ? "electric" : ""),
-    dial: !k.setup && !k.hobType ? "" : k.dial === "numbers" ? "n" + (Number(k.stoveMax) || 9) : k.dial === "none" ? "none" : "",
-    ovenType: k.setup || k.ovenType ? (ovenType(k) === "unsure" ? "" : ovenType(k)) : "",
-    gadgets, other, people: k.people || 2, avoid: k.avoid || "",
+    heat: !k.setup ? "" : k.dial === "numbers" ? "numbers" : (k.dial === "none" || k.hobType === "gas") ? "gas" : "unsure",
+    max: Number(k.stoveMax) || 9, oven: k.setup ? ovenType(k) : "",
+    gadgets, other, people: k.people || 4, avoid: k.avoid || "",
     units: u.weight === "oz" ? "us" : u.spoons ? "gms" : "gm"
   };
 }
 function kfToKitchen(f, profile) {
   const appliancesText = [...f.gadgets, ...(f.other.trim() ? [f.other.trim()] : [])].join(", ");
-  const dialNum = /^n\d+$/.test(f.dial);
-  return { type: "kitchen", setup: true, appliancesText, hobType: f.hobType || "unsure", hobModel: "", dial: dialNum ? "numbers" : f.dial === "none" ? "none" : "unsure",
-    stoveMax: dialNum ? Number(f.dial.slice(1)) : null, ovenType: f.ovenType || "unsure",
+  return { type: "kitchen", setup: true, appliancesText, hobType: f.heat === "gas" ? "gas" : f.heat === "numbers" ? "numbered" : "unsure", hobModel: "",
+    dial: f.heat === "numbers" ? "numbers" : f.heat === "gas" ? "none" : "unsure", stoveMax: f.heat === "numbers" ? f.max : null, ovenType: f.oven || "unsure",
     weight: f.units === "us" ? "oz" : "g", liquid: f.units === "us" ? "cup" : "ml", spoons: f.units !== "gm", people: f.people, avoid: f.avoid.trim(), profile: profile || null };
+}
+/* The questions: only what changes how a recipe is written. One per screen, tap to answer. */
+const KW = {
+  heat: { q: "How do you turn your hob up and down?", hint: "The hob is where the pans go.", opts: [["numbers", "With numbers", "a knob or buttons, like 1 to 9", "kdial"], ["gas", "Gas flame, no numbers", "you just turn the knob", "kflame"], ["unsure", "Not sure", "", "kq"]] },
+  max: { q: "What's the biggest number?", hint: "Look at the knob or the buttons.", big: true, opts: [["6", "6"], ["9", "9"], ["10", "10"], ["12", "12"]] },
+  oven: { q: "Does your oven have a fan?", hint: "Look for a little fan symbol on the knob.", opts: [["fan", "Yes, it has a fan", "", "kfan"], ["conventional", "No fan", "", "knofan"], ["gas", "It's a gas oven", "you light it with a flame", "kflame"], ["none", "I don't have an oven", "", "kno"], ["unsure", "Not sure", "", "kq"]] },
+  gadgets: { q: "Do you have any of these?", hint: "Tap all you have. Recipes will use them when it helps." },
+  people: { q: "How many people do you usually cook for?", hint: "New recipes start with this many servings.", big: true, opts: [["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"], ["6", "6+"]] },
+  avoid: { q: "Anything you can't or won't eat?", hint: "Like allergies, or foods you don't like." },
+  units: { q: "How do you like to measure?", opts: [["gms", "Grams and spoons", "like 200 g flour, 1 tsp salt"], ["gm", "Grams only", "even for small amounts"], ["us", "Cups", "American style"]] }
+};
+function kwSteps(a) { return ["heat", ...(a.heat === "numbers" ? ["max"] : []), "oven", "gadgets", "people", "avoid"]; }
+function startKitchenSetup() { S.kw = { a: kitchenForm(Store.kitchen()), i: 0, single: false }; render(); window.scrollTo(0, 0); }
+function viewKitchenStep() {
+  const w = S.kw, a = w.a, steps = w.single ? [w.single] : kwSteps(a), key = steps[w.i], Q = KW[key];
+  const cur = key === "max" ? String(a.max) : key === "people" ? String(Math.min(6, a.people)) : a[key];
+  let body = "";
+  if (Q.opts) body = `<div class="ktiles${Q.big ? " big" : ""}">${Q.opts.map(([v, l, sub, ic]) => `<button class="ktile" data-act="kw-pick" data-v="${v}" aria-pressed="${cur === v}">${ic ? `<span class="ki">${I[ic]}</span>` : ""}<span class="kt"><b>${l}</b>${sub ? `<small>${sub}</small>` : ""}</span></button>`).join("")}</div>`;
+  else if (key === "gadgets") body = `<div class="ktiles two">${GADGETS.map(g => `<button class="ktile" data-act="kw-gadget" data-v="${g}" aria-pressed="${a.gadgets.includes(g)}"><span class="kt"><b>${g}</b></span><span class="kcheck">${I.tick}</span></button>`).join("")}</div>
+    <input class="input" id="kw-other" value="${esc(a.other)}" placeholder="Something else? e.g. Ninja Speedi" autocomplete="off">
+    <button class="btn primary block" data-act="kw-next" id="kw-gnext">${a.gadgets.length || a.other.trim() ? "Next" : "I don't have any of these"}</button>`;
+  else body = `<input class="input" id="kw-avoid" value="${esc(a.avoid)}" placeholder="e.g. nuts, mushrooms" autocomplete="off">
+    <button class="btn primary block" data-act="kw-next">${w.single ? "Save" : "Finish"}</button>
+    ${a.avoid ? "" : `<button class="btn block" data-act="kw-nothing">Nothing, I eat everything</button>`}`;
+  const n = steps.length;
+  return `<div class="wrap stack" style="padding-block:6px 0">
+    <div class="kwtop"><button class="iconbtn" data-act="kw-back" aria-label="Back">${I.back}</button>${w.single ? "" : `<div class="kdots" aria-label="Question ${w.i + 1} of ${n}">${steps.map((_, j) => `<i class="${j < w.i ? "done" : j === w.i ? "on" : ""}"></i>`).join("")}</div>`}<span style="width:42px"></span></div>
+    <header class="pagehead"><h1 class="kwq">${Q.q}</h1>${Q.hint ? `<p>${Q.hint}</p>` : ""}</header>
+    ${body}
+  </div>`;
+}
+function kwAdvance() {
+  const w = S.kw;
+  if (w.single) { saveKitchen(); return; }
+  const steps = kwSteps(w.a);
+  if (w.i < steps.length - 1) { w.i++; render(); window.scrollTo(0, 0); } else saveKitchen();
 }
 function viewKitchen() {
   const k = Store.kitchen();
-  if (!S.kf) S.kf = kitchenForm(k);
-  const f = S.kf;
-  const one = (key, opts) => `<div class="pills" role="group">${opts.map(([v, l, sub]) => `<button class="pill" data-act="kf" data-key="${key}" data-v="${v}" aria-pressed="${f[key] === v}">${l}${sub ? `<small>${sub}</small>` : ""}</button>`).join("")}</div>`;
-  const h = heatOf(kfToKitchen(f)), n = Store.recipes().length;
+  if (!k.setup && !S.kw) S.kw = { a: kitchenForm(k), i: 0, single: false };
+  if (S.kw) return viewKitchenStep();
+  const a = kitchenForm(k), h = heatOf(k), apps = applianceList(k), n = Store.recipes().length;
+  const row = (step, label, value, extra = "") => `<button class="rv" data-act="kw-edit" data-step="${step}"><span class="tx"><span class="eyebrow">${label}</span><b>${value}</b>${extra}</span><span class="chg">Change</span></button>`;
+  const ovenTxt = { fan: "Fan oven", conventional: "Oven without a fan", gas: "Gas oven", none: "No oven", unsure: "Not sure what kind" }[a.oven];
   return `<div class="wrap stack" style="padding-block:6px 0">
-    <header class="pagehead"><h1>My <em>kitchen</em></h1><p>Tap your answers. Recipes get written for what you have, like “fry on 6”.</p></header>
-    <section class="kq"><h3>Your hob</h3>${one("hobType", [["gas", "Gas", "real flames"], ["induction", "Induction", "flat black glass"], ["electric", "Electric", "glass or rings that glow"]])}</section>
-    <section class="kq"><h3>Does the hob have numbers?</h3>${one("dial", [["n6", "1 to 6"], ["n9", "1 to 9"], ["n12", "1 to 12"], ["none", "No numbers"]])}
-      ${/^n\d+$/.test(f.dial) ? `<p class="hint tnum">Recipes will say low = ${esc(h.low)}, medium = ${esc(h.medium)}, high = ${esc(h.high)}.</p>` : ""}</section>
-    <section class="kq"><h3>Your oven</h3>${one("ovenType", [["fan", "Fan oven"], ["conventional", "Normal", "no fan"], ["gas", "Gas oven"], ["none", "No oven"]])}</section>
-    <section class="kq"><h3>What else do you have?</h3><p class="hint">Tap all that apply.</p>
-      <div class="pills">${GADGETS.map(g => `<button class="pill" data-act="kf-gadget" data-v="${g}" aria-pressed="${f.gadgets.includes(g)}">${g}</button>`).join("")}</div>
-      <input class="input" id="kf-other" value="${esc(f.other)}" placeholder="Anything else? e.g. Ninja Speedi" autocomplete="off"></section>
-    <section class="kq"><h3>Cooking for</h3><div class="serv" style="padding:6px 6px 6px 16px"><span class="tnum" style="font-weight:700">${f.people} ${f.people === 1 ? "person" : "people"}</span><div class="ctl"><button data-act="kf-people" data-d="-1" aria-label="Fewer">−</button><button data-act="kf-people" data-d="1" aria-label="More">+</button></div></div></section>
-    <section class="kq"><h3>Measurements</h3>${one("units", [["gms", "Grams + spoons"], ["gm", "Grams only"], ["us", "Cups"]])}</section>
-    <section class="kq"><h3>Anything you don't eat? <span class="muted" style="font-weight:500">(optional)</span></h3><input class="input" id="kf-avoid" value="${esc(f.avoid)}" placeholder="e.g. nuts, mushrooms" autocomplete="off"></section>
-    <div class="savebar"><button class="btn primary block" data-act="kf-save">${k.setup ? "Save changes" : "Save my kitchen"}</button></div>
-    ${k.setup && n ? `<section class="panel"><b>Update my recipes</b><p class="hint">Rewrite all ${n} recipe${n === 1 ? "" : "s"} for this kitchen. The dishes stay the same.</p><button class="btn block" data-act="update-all-ask">${I.magic} Update all ${n}</button></section>` : ""}
+    <header class="pagehead"><h1>My <em>kitchen</em></h1><p>Every recipe gets written for this. Tap anything to change it.</p></header>
+    <div class="rvlist">
+      ${row("heat", "Hob", a.heat === "numbers" ? `Numbers 1 to ${a.max}` : a.heat === "gas" ? "Gas flame, no numbers" : "Not sure", h.numbered ? `<div class="heat tnum"><span>Low <b>${esc(h.low)}</b></span><span>Medium <b>${esc(h.medium)}</b></span><span>High <b>${esc(h.high)}</b></span></div>` : "")}
+      ${row("oven", "Oven", ovenTxt)}
+      ${row("gadgets", "Gadgets", apps.length ? esc(apps.map(x => x.name).join(", ")) : "None")}
+      ${row("people", "Cooking for", `${k.people} ${k.people === 1 ? "person" : "people"}`)}
+      ${row("avoid", "Doesn't eat", esc(k.avoid || "Eats everything"))}
+      ${row("units", "Measurements", { gms: "Grams and spoons", gm: "Grams only", us: "Cups" }[a.units])}
+    </div>
+    ${n ? `<section class="panel"><b>Update my recipes</b><p class="hint">Rewrite all ${n} recipe${n === 1 ? "" : "s"} for this kitchen. The dishes stay the same.</p><button class="btn block" data-act="update-all-ask">${I.magic} Update all ${n}</button></section>` : ""}
     <section class="panel" id="creditpanel" hidden></section>
     <section class="panel"><b>Your account</b><p class="hint">Signed in as <b>${esc(S.user || "")}</b>. Sign in with the same username on any phone to see your recipes.</p>
       <div class="btnrow"><button class="btn" data-act="backup-pick">Import a backup</button><button class="btn" data-act="signout">Sign out</button></div></section>
@@ -785,9 +822,7 @@ function normProfile(o) {
   };
 }
 async function saveKitchen() {
-  const f = S.kf, base = kfToKitchen(f, null);
-  if (!f.hobType || !f.ovenType) { toast("Tap your hob and oven first."); return; }
-  if (!f.dial) base.dial = f.hobType === "gas" ? "none" : "unsure";
+  const f = S.kw.a, base = kfToKitchen(f, null);
   const old = Store.kitchen();
   const needProfile = base.appliancesText && (base.appliancesText !== old.appliancesText || !old.profile);
   if (needProfile) {
@@ -797,8 +832,8 @@ One entry per separate machine; a multi-cooker is ONE entry listing everything i
     const prof = await runAI("kitchen", "Saving your kitchen", (signal, onStart) => AI.fn.json(prompt, { signal, onText: onStart }).then(normProfile));
     base.profile = prof ? { appliances: prof.appliances, hob: "", heat: null } : null;
   } else if (old.profile && old.profile.appliances) base.profile = { appliances: old.profile.appliances, hob: "", heat: null };
-  Store.put("kitchen", base); S.kf = kitchenForm(base); render();
-  toast(old.setup ? "Kitchen updated" : "Kitchen saved. New recipes will be written for it.");
+  Store.put("kitchen", base); S.kw = null; render(); window.scrollTo(0, 0);
+  toast(old.setup ? "Kitchen updated" : "All set! New recipes will be written for your kitchen.");
 }
 async function updateAll() {
   const rs = Store.recipes();
@@ -1103,7 +1138,7 @@ const keepNote = () => { const n = $("#addnote"); if (n) S.note = n.value; };
 const A = {
   tab(t) {
     S.tab = t.dataset.tab; S.openId = null; S.selecting = false; S.selected.clear(); Wake.set(false);
-    S.kf = null;
+    S.kw = null;
     closeSheet(); render(); window.scrollTo(0, 0);
   },
   open(t) {
@@ -1259,9 +1294,23 @@ const A = {
     const nr = await runAI("import", "Saving from Ask", (signal, onStart) => aiRecipe({ task: "Turn this recipe suggestion into a full recipe. Keep its ingredients and method.", content: m.content }, signal, onStart));
     if (nr) saveNewRecipe(nr, "Ask", "ai");
   },
-  kf(t) { S.kf[t.dataset.key] = t.dataset.v; render(); },
-  "kf-gadget"(t) { const g = t.dataset.v, f = S.kf; f.gadgets = f.gadgets.includes(g) ? f.gadgets.filter(x => x !== g) : [...f.gadgets, g]; t.setAttribute("aria-pressed", String(f.gadgets.includes(g))); },
-  "kf-people"(t) { S.kf.people = Math.max(1, Math.min(20, S.kf.people + Number(t.dataset.d))); render(); },
+  "kw-pick"(t) {
+    const w = S.kw, key = (w.single ? [w.single] : kwSteps(w.a))[w.i], v = t.dataset.v;
+    if (key === "max") w.a.max = Number(v); else if (key === "people") w.a.people = Number(v); else w.a[key] = v;
+    if (key === "heat" && v === "numbers" && w.single) { w.single = false; w.i = 1; w.editHeat = true; render(); return; }
+    if (key === "max" && w.editHeat) { w.single = "max"; w.i = 0; }
+    t.parentElement.querySelectorAll(".ktile").forEach(b => b.setAttribute("aria-pressed", String(b === t)));
+    setTimeout(kwAdvance, 180);
+  },
+  "kw-gadget"(t) {
+    const g = t.dataset.v, a = S.kw.a; a.gadgets = a.gadgets.includes(g) ? a.gadgets.filter(x => x !== g) : [...a.gadgets, g];
+    t.setAttribute("aria-pressed", String(a.gadgets.includes(g)));
+    const nb = $("#kw-gnext"); if (nb) nb.textContent = a.gadgets.length || a.other.trim() ? "Next" : "I don't have any of these";
+  },
+  "kw-next"() { if (document.activeElement) document.activeElement.blur(); kwAdvance(); },
+  "kw-nothing"() { S.kw.a.avoid = ""; kwAdvance(); },
+  "kw-back"() { const w = S.kw; if (w.single || w.i === 0) { S.kw = Store.kitchen().setup ? null : (S.tab = "recipes", null); } else w.i--; render(); window.scrollTo(0, 0); },
+  "kw-edit"(t) { S.kw = { a: kitchenForm(Store.kitchen()), i: 0, single: t.dataset.step }; render(); window.scrollTo(0, 0); },
   "kf-save"() { saveKitchen(); },
   "backup-pick"() { $("#f-backup").click(); },
   "auth-toggle"() { S.authMode = S.authMode === "signup" ? "login" : "signup"; render(); },
@@ -1296,7 +1345,7 @@ document.addEventListener("input", e => {
   if (t.id === "q") { S.search = t.value; $("#grid").innerHTML = gridHtml(); }
   else if (t.id === "libq") { S.lib.q = t.value; clearTimeout(libT); libT = setTimeout(loadLibrary, 350); }
   else if (t.id === "chatin" || t.id === "kin") { t.style.height = "auto"; t.style.height = Math.min(120, t.scrollHeight) + "px"; }
-  else if (S.kf && (t.id === "kf-other" || t.id === "kf-avoid")) S.kf[t.id.slice(3)] = t.value;
+  else if (S.kw && (t.id === "kw-other" || t.id === "kw-avoid")) { S.kw.a[t.id.slice(3)] = t.value; const nb = $("#kw-gnext"); if (nb) nb.textContent = S.kw.a.gadgets.length || S.kw.a.other.trim() ? "Next" : "I don't have any of these"; }
 });
 document.addEventListener("submit", e => {
   e.preventDefault();
@@ -1313,7 +1362,7 @@ document.addEventListener("keydown", e => {
   if (e.key === "Enter" && e.target.id === "friendcode") { e.preventDefault(); A["friend-go"](); }
   if (e.key === "Enter" && !e.shiftKey && e.target.id === "kin") { e.preventDefault(); kcAnswer(e.target.value); }
   if (e.key === "Enter" && !e.shiftKey && e.target.id === "chatin" && matchMedia("(pointer:fine)").matches) { e.preventDefault(); sendChat(e.target.value); }
-  if (e.key === "Enter" && /^kf-/.test(e.target.id)) { e.preventDefault(); e.target.blur(); }
+  if (e.key === "Enter" && /^kw-/.test(e.target.id)) { e.preventDefault(); e.target.blur(); kwAdvance(); }
 });
 window.addEventListener("scroll", () => $("#top").classList.toggle("scrolled", window.scrollY > 4), { passive: true });
 
@@ -1397,7 +1446,7 @@ function onSignedOut() {
 async function signOut() {
   try { await api("POST", "/api/logout", {}); } catch {}
   lsSet(Store.cacheKey(), null); lsSet(LS_CHAT, []); lsSet("rt-last-user", null);
-  S.chat = []; S.kf = null; S.anon = false; S.anonCount = 0;
+  S.chat = []; S.kw = null; S.anon = false; S.anonCount = 0;
   Store.data = { recipes: {}, kitchen: null }; Store.mode = "loading";
   closeSheet(); S.user = null; S.authMode = "login"; render(); window.scrollTo(0, 0);
 }

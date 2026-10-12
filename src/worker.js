@@ -359,7 +359,7 @@ function pageImage(html, recipe, base) {
 const USERNAME_RX = /^[a-z0-9_.-]{3,24}$/;
 const KEY_RX = /^[A-Za-z0-9_.:-]{1,80}$/;
 async function api(req, env, url, ctx) {
-  const stub = env.STORE.get(env.STORE.idFromName("main"));
+  const stub = env.STORE.get(env.STORE.idFromName("v2"));
   const path = url.pathname, method = req.method;
   if ((method === "POST" || method === "PUT") && !(req.headers.get("content-type") || "").includes("application/json")) return fail("bad_request", "Expected JSON.", 415);
 

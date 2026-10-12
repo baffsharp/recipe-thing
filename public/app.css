@@ -446,3 +446,27 @@ textarea.input{resize:vertical;line-height:1.45}
 .checkrow input{width:22px;height:22px;accent-color:var(--accent);flex:none;margin-top:1px}
 .checkrow b{display:block}.checkrow small{display:block;color:var(--muted);font-size:13.5px}
 .sheet .dish{aspect-ratio:16/9}
+.kwtop{display:flex;align-items:center;justify-content:space-between;margin:-4px -8px 0}
+.kdots{display:flex;gap:6px}
+.kdots i{width:8px;height:8px;border-radius:50%;background:var(--surface-2)}
+.kdots i.done{background:color-mix(in srgb,var(--accent) 45%,var(--surface-2))}
+.kdots i.on{width:22px;border-radius:8px;background:var(--grad)}
+.kwq{font-size:clamp(28px,8vw,36px)!important}
+.ktiles{display:flex;flex-direction:column;gap:10px}
+.ktiles.two{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+.ktiles.big{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+.ktile{position:relative;display:flex;align-items:center;gap:14px;min-height:64px;padding:12px 16px;border-radius:18px;background:var(--surface);text-align:left;transition:transform .1s}
+.ktile:active{transform:scale(.98)}
+.ktiles.big .ktile{justify-content:center;min-height:76px}
+.ktiles.big .kt b{font-family:var(--f-display);font-size:30px;font-weight:800}
+.ki{width:44px;height:44px;border-radius:14px;background:var(--bg);display:grid;place-items:center;flex:none}
+.ki svg{width:24px;height:24px;color:var(--accent)}
+.kt{display:flex;flex-direction:column;min-width:0}
+.kt b{font-size:17px}.kt small{font-size:14px;color:var(--muted)}
+.ktile[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.ktile[aria-pressed="true"] small{color:color-mix(in srgb,var(--bg) 70%,transparent)}
+.ktile[aria-pressed="true"] .ki{background:color-mix(in srgb,var(--bg) 15%,transparent)}
+.ktile[aria-pressed="true"] .ki svg{color:var(--a1)}
+.kcheck{position:absolute;top:8px;right:8px;width:20px;height:20px;border-radius:50%;background:var(--a2);display:none;place-items:center}
+.kcheck svg{width:12px;height:12px;stroke:#fff}
+.ktile[aria-pressed="true"] .kcheck{display:grid}
