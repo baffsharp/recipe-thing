@@ -240,6 +240,7 @@ const Store = {
         else if (d.data && d.data.type === "recipe") next.recipes[d.key] = Object.assign({}, d.data, { id: d.key });
       }
       this.data = next; this.mode = "cloud"; this.saveCache();
+      for (const r of Object.values(next.recipes)) if (r.photoCredit && r.photoUrl) this.put(r.id, Object.assign({}, r, { photoUrl: "", photoCredit: "", photoLink: "" }));
     } catch (e) {
       this.mode = "cloud";
       if (e.code !== "signed_out") toast(cached ? "You're offline, so you're seeing your saved copy." : e.message, 4000);
@@ -376,6 +377,9 @@ Rules:
 - tips: 1 or 2 short, genuinely useful sentences (storing, making ahead, an allergy warning), or "" if there is nothing worth saying.
 - photoQuery: 2 to 4 English words naming the finished dish for a photo search (e.g. "chicken tikka masala", "chocolate mug cake").
 - changes: one sentence on what you adapted for their kitchen or request, or "".
+- LANGUAGE: the source may be in Portuguese (Portugal or Brazil), Spanish or another language. Always write the recipe in clear English. Keep a traditional dish name as it is (e.g. "Bacalhau à Brás", "Pão de Queijo", "Brigadeiro", "Arroz de Pato") and you may add the English in description. Translate ingredient names into English, adding the original in the note when it helps shopping (e.g. item "double cream", note "natas").
+- PORTUGUESE MEASURES, convert them to the cook's measurement preferences: xícara (chá) = 240 ml (Brazil); chávena = 250 ml (Portugal); copo = a glass, about 200 ml (copo americano 190 ml, copo de requeijão 250 ml); colher de sopa = 1 tbsp; colher de sobremesa = 2 tsp; colher de chá = 1 tsp; colher de café = ½ tsp; pitada = pinch; q.b., a gosto = to taste; dente de alho = garlic clove; lata = a tin (e.g. leite condensado 395 g, creme de leite 200 g); pacote = packet. For dry ingredients in cups, give grams when they use grams (1 xícara: farinha de trigo 120 g, açúcar 180 g, arroz 185 g, chocolate em pó 90 g).
+- COMMON TERMS: farinha de trigo = plain flour; fermento em pó / fermento químico = baking powder; fermento biológico = yeast; creme de leite = single cream (Brazil); natas = cream (Portugal); manteiga = butter; requeijão = cream cheese spread; polvilho = tapioca starch; gema / clara = egg yolk / white; forno pré-aquecido = preheated oven; banho-maria = bain-marie; refogar = sauté gently.
 - If the content is not a recipe at all, reply {"error": "short reason"}.`;
 function recipeText(r, f = 1, opts = {}) {
   const sv = Math.round(r.servings * f);
@@ -639,7 +643,7 @@ function viewDetail() {
     ${r.tips ? `<section class="panel"><span class="eyebrow">Good to know</span><p>${esc(r.tips)}</p></section>` : ""}
     ${r.example ? `<button class="btn primary block" data-act="tab" data-tab="add">${I.plus} Add your own recipe</button>` : `
     ${r.source && r.source.url ? `<a class="btn ghost" style="align-self:center" href="${esc(r.source.url)}" target="_blank" rel="noopener">Open the original page</a>` : ""}
-    ${!photoOf(r) && !r.example ? `<button class="btn ghost" style="align-self:center" data-act="find-photo">${I.camera} Find a photo</button>` : ""}
+    ${!photoOf(r) && !r.example ? `<button class="btn ghost" style="align-self:center" data-act="dish-photo">${I.camera} Add a photo of your dish</button>` : ""}
     ${r.photoCredit || (r.photoUrl && r.source && r.source.kind === "link") ? `<p class="foot">Photo${r.photoCredit ? ": " + esc(r.photoCredit) : " from the original page"}${r.photoLink ? ` · <a href="${esc(r.photoLink)}" target="_blank" rel="noopener">source</a>` : ""}</p>` : ""}
     <p class="foot">${esc(r.source && r.source.label ? "Added from " + (r.source.kind === "link" || r.source.kind === "friend" ? r.source.label : r.source.label.toLowerCase()) : "")}${r.createdAt ? " · " + new Date(r.createdAt).toLocaleDateString() : ""}</p>
     <button class="btn danger block" data-act="delete-ask">Delete recipe</button>`}
@@ -937,7 +941,6 @@ function saveNewRecipe(rec, sourceLabel, kind, extra) {
   Store.put(id, body);
   S.tab = "recipes"; S.openId = id; render(); window.scrollTo(0, 0);
   Wake.set(true); toast("Added to your recipes");
-  if (!body.photo && !body.photoUrl) findPhoto(id, body.photoQuery || body.title, true);
   return id;
 }
 async function findPhoto(id, q, quiet) {
@@ -1078,6 +1081,7 @@ ${kitchenRules(k)}
 
 THEIR RECIPE BOOK (${rs.length} recipe${rs.length === 1 ? "" : "s"}):${lib || "\n(empty so far)"}
 ${ctx && ctx.r ? `\nRIGHT NOW THEY ARE LOOKING AT THIS RECIPE${ctx.step != null ? " IN COOKING MODE" : ""} (scaled to ${Math.round(ctx.r.servings * ctx.f)} servings). If they say "this", "it" or "this step", they mean this:\n${recipeText(ctx.r, ctx.f, { step: ctx.step })}\n` : ctx && ctx.kitchen ? "\nRIGHT NOW THEY ARE LOOKING AT THEIR KITCHEN SETTINGS.\n" : ""}
+Reply in the language they write in (Portuguese from Portugal or Brazil is common: match it). You understand Portuguese cooking terms and measures (xícara, chávena, copo, colher de sopa, q.b.).
 If they ask for a recipe that isn't in their book, write it out with a title line, an "Ingredients" list with amounts, then numbered steps. The app shows a button to save it.`;
 }
 function canAskHtml() {
@@ -1319,7 +1323,7 @@ const A = {
   "lib-code"() { openReceive(S.lib.shared.code); },
   "lib-open"(t) { openLibRecipe(t.dataset.id); },
   "lib-add"() { const { recipe, author } = S.sheet; closeSheet(); const c = clone(recipe); delete c.private; saveNewRecipe(c, author ? "@" + author : "the recipe library", "library"); },
-  "find-photo"(t) { t.disabled = true; const r = Store.get(S.openId) || {}; findPhoto(S.openId, r.photoQuery || r.title, false); }
+  "dish-photo"() { S.dishFor = S.openId; $("#f-dish").click(); }
 };
 document.addEventListener("click", e => {
   const t = e.target.closest("[data-act]"); if (!t) return;
@@ -1334,6 +1338,11 @@ document.addEventListener("change", async e => {
   if (t.id === "f-photo") { fileToPhotos([...t.files]); t.value = ""; if (S.photos.length) photoSheet(); }
   else if (t.id === "f-pdf") { const f = t.files[0]; t.value = ""; if (f) { S.pdf = f; pdfSheet(); } }
   else if (t.id === "f-backup") { const f = t.files[0]; t.value = ""; if (f) importBackup(f); }
+  else if (t.id === "f-dish" && S.dishFor && !(S.sheet && S.sheet.kind === "edit")) {
+    const f = t.files[0], id = S.dishFor; t.value = ""; S.dishFor = null; if (!f) return;
+    try { const photo = await compressImage(f); const r = Store.get(id); if (r) { Store.put(id, Object.assign({}, r, { photo, photoUrl: "", photoCredit: "", photoLink: "" })); toast("Photo added"); } }
+    catch { toast("Couldn't open that photo. Try a JPEG or PNG."); }
+  }
   else if (t.id === "f-dish") {
     const f = t.files[0]; t.value = ""; if (!f || !S.sheet || S.sheet.kind !== "edit") return;
     try { S.sheet.photo = await compressImage(f); $("#e-pv").innerHTML = `<img src="${S.sheet.photo}" alt="">`; } catch { toast("Couldn't open that photo. Try a JPEG or PNG."); }
