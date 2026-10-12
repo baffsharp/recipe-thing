@@ -19,11 +19,12 @@
     // Which Claude model does the AI work. Haiku is the cheapest.
     "AI_MODEL": "claude-haiku-5-5",
     // Safety limits on AI use, per person per day and for everyone per day.
-    "AI_DAILY_PER_USER": "40",
-    "AI_DAILY_TOTAL": "150",
+    "AI_DAILY_PER_USER": "120",
+    "AI_DAILY_TOTAL": "300",
     // How much Claude credit you've bought in total, in US dollars. Change it when you top up.
     // The Kitchen page shows how much is used and warns when it's running low.
     "AI_BUDGET_USD": "5",
+    "OWNER_USERNAMES": "luca",
     // Claude Haiku prices per million words-pieces (tokens), used to work out the spend.
     "PRICE_IN_PER_MILLION": "0.10",
     "PRICE_OUT_PER_MILLION": "0.50"

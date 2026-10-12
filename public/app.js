@@ -546,7 +546,7 @@ function render() {
   if (!signedIn) {
     $("#fab").hidden = true; $("#selbar").hidden = true;
     if (editing()) { S.pendingRender = true; return; }
-    $("#view").innerHTML = S.booting ? `<div class="splash">${I.logo}</div>` : S.landing ? viewLanding() : viewAuth();
+    $("#view").innerHTML = S.booting ? `<div class="splash">${I.logo}</div>` : viewAuth();
     return;
   }
   renderTop(); renderTabs(); renderFab(); renderSelbar();
@@ -564,12 +564,11 @@ async function paintCredit() {
   if (!creditCache || Date.now() - creditAt > 30000) {
     try { creditCache = await api("GET", "/api/credit"); creditAt = Date.now(); } catch { return; }
   }
-  const el = $("#creditpanel"); if (!el || !creditCache.budget) return;
-  const { spent, budget } = creditCache, left = Math.max(0, budget - spent), pct = Math.min(100, (spent / budget) * 100), low = left < budget * 0.2;
+  const el = $("#creditpanel"); if (!el || !creditCache.owner || !creditCache.budget) return;
+  const { left, budget } = creditCache, low = left < budget * 0.2;
   el.hidden = false;
-  el.innerHTML = `<b>AI credit</b><div class="meter${low ? " low" : ""}" aria-hidden="true"><i style="width:${Math.max(2, pct)}%"></i></div>
-    ${(creditCache.byKind || []).length ? `<div class="usage tnum">${creditCache.byKind.map(k => `<span>${esc((({ recipe: "Reading recipes", photo: "Reading photos", check: "Checking recipes", ask: "Ask", kitchen: "Kitchen setup", "": "Other", other: "Other" })[k.kind]) || k.kind)} <b>${k.n}×</b> $${k.usd.toFixed(3)}</span>`).join("")}</div>` : ""}
-    <p class="hint tnum">$${spent.toFixed(2)} of $${budget.toFixed(2)} used${low ? ". Running low: top up at console.anthropic.com, then raise AI_BUDGET_USD in Cloudflare." : ", about $" + left.toFixed(2) + " left."}</p>`;
+  el.innerHTML = `<b>AI credit left</b><p class="creditleft tnum${low ? " low" : ""}">$${left.toFixed(2)}</p>
+    ${low ? `<p class="hint">Running low. Top up at console.anthropic.com.</p>` : ""}`;
 }
 function renderTop() {
   const r = S.tab === "recipes" && S.openId ? Store.get(S.openId) : null;
@@ -675,7 +674,6 @@ function viewDetail() {
     ${r.example ? `<button class="btn primary block" data-act="tab" data-tab="add">${I.plus} Add your own recipe</button>` : `
     ${r.source && r.source.url ? `<a class="btn ghost" style="align-self:center" href="${esc(r.source.url)}" target="_blank" rel="noopener">Open the original page</a>` : ""}
     ${!photoOf(r) && !r.example ? `<button class="btn ghost" style="align-self:center" data-act="dish-photo">${I.camera} Add a photo of your dish</button>` : ""}
-    ${r.photoCredit || (r.photoUrl && r.source && r.source.kind === "link") ? `<p class="foot">Photo${r.photoCredit ? ": " + esc(r.photoCredit) : " from the original page"}${r.photoLink ? ` · <a href="${esc(r.photoLink)}" target="_blank" rel="noopener">source</a>` : ""}</p>` : ""}
     <p class="foot">${esc(r.source && r.source.label ? "Added from " + (r.source.kind === "link" || r.source.kind === "friend" ? r.source.label : r.source.label.toLowerCase()) : "")}${r.createdAt ? " · " + new Date(r.createdAt).toLocaleDateString() : ""}</p>
     <button class="btn danger block" data-act="delete-ask">Delete recipe</button>`}
   </div>`;
@@ -846,7 +844,7 @@ function viewKitchen() {
       ${row("avoid", "Doesn't eat", esc(k.avoid || "Eats everything"))}
       ${row("units", "Measurements", { gms: "Grams and spoons", gm: "Grams only", us: "Cups" }[a.units])}
     </div>
-    ${n ? `<section class="panel"><b>Update my recipes</b><p class="hint">Rewrite all ${n} recipe${n === 1 ? "" : "s"} for this kitchen. The dishes stay the same.</p><button class="btn block" data-act="update-all-ask">${I.magic} Update all ${n}</button></section>` : ""}
+    ${n ? `<section class="panel"><b>Update my recipes</b><p class="hint">Rewrite ${n === 1 ? "your recipe" : "all " + n + " recipes"} for this kitchen, in clear English. The dishes stay the same.</p><button class="btn block" data-act="update-all-ask">${I.magic} ${n === 1 ? "Update it" : "Update all " + n}</button></section>` : ""}
     <section class="panel" id="creditpanel" hidden></section>
     <section class="panel"><b>Your account</b><p class="hint">Signed in as <b>${esc(S.user || "")}</b>. Sign in with the same username on any phone to see your recipes.</p>
       <div class="btnrow"><button class="btn" data-act="backup-pick">Import a backup</button><button class="btn" data-act="signout">Sign out</button></div></section>
@@ -885,14 +883,14 @@ async function updateAll() {
     if (ctl.signal.aborted) break;
     S.busy.line = `Updating ${done + failed + 1} of ${rs.length}`; S.busy.label = r.title; renderBusy();
     try {
-      const nr = await aiRecipe({ task: "Rewrite this recipe's method for this cook's kitchen: their hob numbers, oven, appliances and measurement preferences. It must stay the same dish: keep the same ingredients, amounts (only convert units if their measurement preferences need it), servings, category and title.", content: recipeText(r), fresh: true }, ctl.signal, () => {});
-      const body = Object.assign({}, r, { ingredients: nr.ingredients, steps: nr.steps, prepMinutes: nr.prepMinutes || r.prepMinutes, cookMinutes: nr.cookMinutes || r.cookMinutes,
+      const nr = await aiRecipe({ task: "Rewrite this recipe for this cook's kitchen: their hob numbers, oven, appliances and measurement preferences. Also put everything into clear English (except a traditional dish name) and convert any Portuguese or Brazilian measures (copo, xícara, chávena, colher...) using the rules below. It must stay the same dish: keep the same ingredients, amounts (only convert units), servings, category and title.", content: recipeText(r), fresh: true }, ctl.signal, () => {});
+      const body = Object.assign({}, r, { description: nr.description || r.description, ingredients: nr.ingredients, steps: nr.steps, prepMinutes: nr.prepMinutes || r.prepMinutes, cookMinutes: nr.cookMinutes || r.cookMinutes,
         tips: nr.tips, tags: r.tags && r.tags.length ? r.tags : nr.tags, emoji: r.emoji || nr.emoji, category: r.category || nr.category });
       Store.put(r.id, body); delete S.servings[r.id]; S.checked[r.id] = {}; done++;
     } catch (e) {
       const c = e && e.code;
       if (c === "cancelled") break;
-      if (c === "rate_limited" || c === "not_granted" || c === "sampling_disabled" || c === "session_expired") { stopMsg = aiCopy(e); break; }
+      if (c === "rate_limited" || c === "no_credit" || c === "ai_not_configured" || c === "offline") { stopMsg = aiCopy(e) + (done ? ` (${done} updated so far.)` : ""); break; }
       failed++;
     }
   }
@@ -974,13 +972,6 @@ function saveNewRecipe(rec, sourceLabel, kind, extra) {
   Wake.set(true); toast("Added to your recipes");
   return id;
 }
-async function findPhoto(id, q, quiet) {
-  let p; try { p = await api("GET", "/api/photo?q=" + encodeURIComponent(q || "")); } catch { if (!quiet) toast("Couldn't find a photo for this one. You can add your own with the pencil."); return; }
-  const r = Store.get(id); if (!r || r.photo || r.photoUrl) return;
-  Store.put(id, Object.assign({}, r, { photoUrl: p.url, photoCredit: p.credit, photoLink: p.link }));
-  if (!quiet) toast("Photo added");
-}
-
 /* ---------- sharing ---------- */
 function shareText(rs) {
   return rs.map(r => {
@@ -1021,11 +1012,11 @@ async function openReceive(code) {
   openSheet(`<h2>${d.recipes.length === 1 ? "A recipe for you" : d.recipes.length + " recipes for you"}</h2><p class="hint">${esc(d.sender || "Someone")} shared ${d.recipes.length === 1 ? "this" : "these"} with you. Untick any you don't want.</p>
     <ul class="pick">${d.recipes.map((r, n) => `<li><label><input type="checkbox" checked data-n="${n}"><span class="e">${esc(emojiOf(r) || "🍽️")}</span><span><b>${esc(r.title)}</b><small class="tnum">${esc([CAT1[catOf(r)], totalMins(r) ? mins(totalMins(r)) : ""].filter(Boolean).join(" · "))}</small></span></label></li>`).join("")}</ul>
     <button class="btn primary block" data-act="receive-go">${I.plus} Add to my recipes</button>
-    <p class="hint">They were written for the other person's kitchen. To fit them to yours, go to Kitchen and tap Update all recipes.</p>`);
+    <p class="hint">They were written for the other person's kitchen. To fit them to yours, go to Kitchen and tap Update all.</p>`);
 }
 function friendSheet() {
   S.sheet = { kind: "friend" };
-  openSheet(`<h2>Get recipes from someone</h2><p class="hint">When someone shares recipes with “Send to someone's app”, they get a 6-letter code. If they sent you a link, just open it.</p>
+  openSheet(`<h2>Get recipes from someone</h2><p class="hint">Type the 6-letter code they sent you.</p>
     <input class="input tnum" id="friendcode" placeholder="e.g. K7P2QX" autocomplete="off" autocapitalize="characters" maxlength="8" style="font-size:22px;letter-spacing:.12em;text-align:center;font-weight:700">
     <button class="btn primary block" data-act="friend-go">Find recipes</button>`);
 }
@@ -1215,7 +1206,7 @@ const A = {
   },
   "update-all-ask"() {
     const n = Store.recipes().length; S.sheet = { kind: "updateall" };
-    openSheet(`<h2>Update all ${n} recipe${n === 1 ? "" : "s"}?</h2><p>Each recipe's method gets rewritten for your kitchen: your hob numbers, oven, appliances and measurements. The dishes, ingredients and amounts stay the same.</p><p class="hint">This can take a few minutes. You can keep using the app, and stop it any time.</p>
+    openSheet(`<h2>${n === 1 ? "Update your recipe?" : "Update all " + n + " recipes?"}</h2><p>Each recipe gets rewritten for your kitchen (hob numbers, oven, gadgets, measurements) and put into clear English, with Portuguese measures like copos converted. The dishes and amounts stay the same.</p><p class="hint">This can take a few minutes. You can keep using the app, and stop it any time.</p>
       <div class="btnrow"><button class="btn" data-act="sheet-close">Not now</button><button class="btn primary" data-act="update-all-go">${I.magic} Update</button></div>`);
   },
   "update-all-go"() { closeSheet(); updateAll(); },
@@ -1235,8 +1226,8 @@ const A = {
       closeSheet(); if (S.selecting) A["sel-cancel"]();
       if (res && res.status === "saved") toast("PDF ready to send");
     } catch (e) {
-      t.disabled = false; t.innerHTML = `${I.pdf} Send as PDF`;
-      if (!e || (e.code !== "cancelled" && e.code !== "declined")) toast(e && e.code === "unavailable" ? "PDFs can't be saved here. Use Copy as text." : "Couldn't make the PDF. Try Copy as text.", 4500);
+      t.disabled = false; t.innerHTML = `${I.pdf} PDF`;
+      if (!e || (e.code !== "cancelled" && e.code !== "declined")) toast("Couldn't make the PDF. Try Text instead.", 4500);
     }
   },
   fav(t) { const r = Store.get(t.dataset.id); if (r) Store.put(r.id, Object.assign({}, r, { fav: !r.fav })); },
@@ -1272,7 +1263,6 @@ const A = {
   "add-pdf"() { keepNote(); $("#f-pdf").click(); },
   "add-paste"() { S.note = ""; pasteSheet(); },
   "add-invent"() { inventSheet(); },
-  "add-manual"() { editSheet(null); },
   "rm-photo"(t) { keepNote(); const p = S.photos.splice(Number(t.dataset.n), 1)[0]; if (p) URL.revokeObjectURL(p.url); if (S.photos.length) photoSheet(); else closeSheet(); },
   async "go-photo"() {
     keepNote(); const files = S.photos.map(p => p.file), note = S.note; closeSheet();
@@ -1345,10 +1335,8 @@ const A = {
   "kw-nothing"() { S.kw.a.avoid = ""; kwAdvance(); },
   "kw-back"() { const w = S.kw; if (w.single || w.i === 0) { S.kw = Store.kitchen().setup ? null : (S.tab = "recipes", null); } else w.i--; render(); window.scrollTo(0, 0); },
   "kw-edit"(t) { S.kw = { a: kitchenForm(Store.kitchen()), i: 0, single: t.dataset.step }; render(); window.scrollTo(0, 0); },
-  "kf-save"() { saveKitchen(); },
   "backup-pick"() { $("#f-backup").click(); },
   "auth-toggle"() { S.authMode = S.authMode === "signup" ? "login" : "signup"; render(); },
-  "landing-go"() { S.landing = null; render(); },
   signout() { signOut(); },
   "open-library"() { S.tab = "library"; S.lib = S.lib || { q: "", cat: "", results: null }; render(); window.scrollTo(0, 0); loadLibrary(); },
   "lib-cat"(t) { S.lib.cat = t.dataset.f; S.lib.results = null; render(); loadLibrary(); },
@@ -1384,7 +1372,7 @@ document.addEventListener("input", e => {
   const t = e.target;
   if (t.id === "q") { S.search = t.value; $("#grid").innerHTML = gridHtml(); }
   else if (t.id === "libq") { S.lib.q = t.value; clearTimeout(libT); libT = setTimeout(loadLibrary, 350); }
-  else if (t.id === "chatin" || t.id === "kin") { t.style.height = "auto"; t.style.height = Math.min(120, t.scrollHeight) + "px"; }
+  else if (t.id === "chatin") { t.style.height = "auto"; t.style.height = Math.min(120, t.scrollHeight) + "px"; }
   else if (S.kw && (t.id === "kw-other" || t.id === "kw-avoid")) { S.kw.a[t.id.slice(3)] = t.value; const nb = $("#kw-gnext"); if (nb) nb.textContent = S.kw.a.gadgets.length || S.kw.a.other.trim() ? "Next" : "I don't have any of these"; }
 });
 document.addEventListener("submit", e => {
@@ -1400,14 +1388,12 @@ document.addEventListener("keydown", e => {
     if (e.key === "ArrowLeft" && S.cook.step > 0) { S.cook.step--; renderCook(); }
   }
   if (e.key === "Enter" && e.target.id === "friendcode") { e.preventDefault(); A["friend-go"](); }
-  if (e.key === "Enter" && !e.shiftKey && e.target.id === "kin") { e.preventDefault(); kcAnswer(e.target.value); }
   if (e.key === "Enter" && !e.shiftKey && e.target.id === "chatin" && matchMedia("(pointer:fine)").matches) { e.preventDefault(); sendChat(e.target.value); }
   if (e.key === "Enter" && /^kw-/.test(e.target.id)) { e.preventDefault(); e.target.blur(); kwAdvance(); }
 });
 window.addEventListener("scroll", () => $("#top").classList.toggle("scrolled", window.scrollY > 4), { passive: true });
 
-/* ---------- welcome, accounts and shared links ---------- */
-const shareCodeInHash = () => (String(location.hash || "").match(/^#get-([A-Za-z0-9]{6})$/) || [])[1] || "";
+/* ---------- welcome and accounts ---------- */
 function viewAuth() {
   const signup = S.authMode === "signup", keep = S.anonCount;
   const w = (icon, b, t) => `<li><span class="i">${icon}</span><span><b>${b}</b> ${t}</span></li>`;
@@ -1425,18 +1411,6 @@ function viewAuth() {
       <button class="btn primary block" type="submit" id="au-go">${signup ? "Create account" : "Sign in"}</button>
     </form>
     <button class="btn ghost" data-act="auth-toggle">${signup ? "I already have an account" : "New here? Make an account"}</button>
-  </div>`;
-}
-function viewLanding() {
-  const L = S.landing, d = L.data, n = d.recipes.length;
-  return `<div class="auth">
-    <div class="authlogo">${I.logo}</div>
-    <h1 class="authname">${n === 1 ? "A recipe" : n + " recipes"} for you</h1>
-    <p class="authtag">${esc(d.sender || "Someone")} shared ${n === 1 ? "this" : "these"} with you on recipe thing.</p>
-    <ul class="pick">${d.recipes.slice(0, 8).map(r => `<li><label><span class="e">${esc(emojiOf(r) || "🍽️")}</span><span><b>${esc(r.title)}</b><small>${esc(CAT1[catOf(r)])}</small></span></label></li>`).join("")}</ul>
-    <div class="sharebox"><b style="text-align:center">Have the app on your phone?</b><span class="hint" style="text-align:center">Open it, tap <b>+</b>, then <b>Get recipes from someone</b>, and type:</span><span class="code">${esc(L.code)}</span></div>
-    <button class="btn primary block" data-act="landing-go">Open them here instead</button>
-    <p class="hint" style="text-align:center">To get the app: in Safari tap Share, then Add to Home Screen.</p>
   </div>`;
 }
 async function doAuth() {
@@ -1468,7 +1442,7 @@ async function boot() {
   S.booting = false; render();
 }
 async function signedIn(name) {
-  S.user = name; S.landing = null; lsSet("rt-last-user", name);
+  S.user = name; lsSet("rt-last-user", name);
   S.tab = "recipes"; S.openId = null;
   render(); window.scrollTo(0, 0);
   await Store.load();
@@ -1482,7 +1456,7 @@ function onSignedOut() {
 async function signOut() {
   try { await api("POST", "/api/logout", {}); } catch {}
   lsSet(Store.cacheKey(), null); lsSet(LS_CHAT, []); lsSet("rt-last-user", null);
-  S.chat = []; S.kw = null; S.anon = false; S.anonCount = 0;
+  S.chat = []; S.kw = null; S.anon = false; S.anonCount = 0; creditCache = null;
   Store.data = { recipes: {}, kitchen: null }; Store.mode = "loading";
   closeSheet(); S.user = null; S.authMode = "login"; render(); window.scrollTo(0, 0);
 }

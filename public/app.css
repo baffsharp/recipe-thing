@@ -414,9 +414,8 @@ textarea.input{resize:vertical;line-height:1.45}
 .splash{min-height:70vh;display:grid;place-items:center}
 .splash .lg{width:72px;height:72px;border-radius:20px;animation:pulse 1.4s ease-in-out infinite}
 .splash .lg b{font-size:40px}.splash .lg i{width:9px;height:9px;margin-bottom:19px}
-.meter{height:10px;border-radius:10px;background:var(--surface-2);overflow:hidden}
-.meter i{display:block;height:100%;background:var(--good);border-radius:10px}
-.meter.low i{background:var(--grad)}
+.creditleft{font:800 34px/1.1 var(--f-display);margin:2px 0 0;letter-spacing:-.02em}
+.creditleft.low{color:var(--accent)}
 .ways{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:12px}
 .ways li{display:flex;gap:12px;align-items:center;font-size:15.5px;line-height:1.35}
 .ways .i{width:38px;height:38px;border-radius:12px;background:var(--surface);display:grid;place-items:center;flex:none}
@@ -470,6 +469,3 @@ textarea.input{resize:vertical;line-height:1.45}
 .kcheck{position:absolute;top:8px;right:8px;width:20px;height:20px;border-radius:50%;background:var(--a2);display:none;place-items:center}
 .kcheck svg{width:12px;height:12px;stroke:#fff}
 .ktile[aria-pressed="true"] .kcheck{display:grid}
-.usage{display:flex;flex-direction:column;gap:2px;font-size:13.5px;color:var(--muted)}
-.usage span{display:flex;justify-content:space-between;gap:8px}
-.usage b{margin-left:auto;margin-right:10px;font-weight:600}

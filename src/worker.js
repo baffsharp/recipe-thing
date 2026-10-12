@@ -99,28 +99,6 @@ export class Store extends DurableObject {
     this.sql.exec(`UPDATE users SET username = ?, hash = ?, salt = ? WHERE id = ?`, username, hash, salt, userId);
     return { username };
   }
-  // A short code to open the same book on another phone. Lasts 1 hour.
-  createLink(userId) {
-    this.sql.exec(`DELETE FROM links WHERE expires < ?`, Date.now());
-    for (let tries = 0; tries < 5; tries++) {
-      let code = ""; for (const b of crypto.getRandomValues(new Uint8Array(6))) code += CODE_ABC[b % CODE_ABC.length];
-      if (this.one(`SELECT 1 AS x FROM links WHERE code = ?`, code)) continue;
-      this.sql.exec(`INSERT INTO links (code, user_id, expires) VALUES (?, ?, ?)`, code, userId, Date.now() + 60 * 60 * 1000);
-      return { code };
-    }
-    return { error: "busy" };
-  }
-  useLink(code, key) {
-    const lock = this.one(`SELECT fails, until FROM attempts WHERE username = ?`, "link:" + key);
-    if (lock && lock.until > Date.now()) return { error: "locked" };
-    const row = this.one(`SELECT user_id FROM links WHERE code = ? AND expires > ?`, code, Date.now());
-    if (!row) {
-      const fails = (lock ? lock.fails : 0) + 1, until = fails >= 10 ? Date.now() + 15 * 60 * 1000 : 0;
-      this.sql.exec(`INSERT INTO attempts (username, fails, until) VALUES (?, ?, ?) ON CONFLICT(username) DO UPDATE SET fails = ?, until = ?`, "link:" + key, fails >= 10 ? 0 : fails, until, fails >= 10 ? 0 : fails, until);
-      return { error: "wrong" };
-    }
-    return { token: this.newSession(row.user_id) };
-  }
   session(token) {
     if (!token) return null;
     return this.one(`SELECT u.id AS id, u.username AS username, (u.hash = '') AS anon FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`, token);
@@ -183,7 +161,6 @@ export class Store extends DurableObject {
     this.sql.exec(`INSERT INTO spend (id, usd) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET usd = usd + ?`, usd, usd);
   }
   getSpend() { const r = this.one(`SELECT usd FROM spend WHERE id = 1`); return r ? r.usd : 0; }
-  spendByKind() { return this.sql.exec(`SELECT kind, COUNT(*) AS n, SUM(tin) AS tin, SUM(tout) AS tout, SUM(usd) AS usd FROM ailog GROUP BY kind ORDER BY usd DESC`).toArray(); }
   useAI(userId, perUser, total) {
     const day = today();
     const mine = this.one(`SELECT count FROM usage WHERE user_id = ? AND day = ?`, userId, day);
@@ -321,35 +298,7 @@ async function handleFetchUrl(req) {
   return json({ title, text, structured: false, url: res.url, image: pageImage(html, null, res.url) });
 }
 
-/* ---------------- food photos ---------------- */
-// Finds a free-to-use photo of a dish: Openverse first, then Wikimedia Commons.
-const UA = { "user-agent": "recipe-thing/1.0 (family recipe app; https://github.com/baffsharp/recipe-thing)" };
-async function openversePhoto(q) {
-  const res = await fetch("https://api.openverse.org/v1/images/?page_size=8&mature=false&q=" + encodeURIComponent(q), { headers: UA, signal: AbortSignal.timeout(7000) });
-  if (!res.ok) return null;
-  const data = await res.json();
-  const p = (data.results || []).find(r => r.thumbnail && (!r.width || r.width >= 400));
-  if (!p) return null;
-  const lic = p.license ? (["cc0", "pdm"].includes(p.license) ? "" : "CC " + p.license.toUpperCase() + (p.license_version ? " " + p.license_version : "")) : "";
-  return { url: p.thumbnail, credit: [p.creator, lic].filter(Boolean).join(", ") || "Openverse", link: p.foreign_landing_url || "" };
-}
-async function commonsPhoto(q) {
-  const api = "https://commons.wikimedia.org/w/api.php?action=query&format=json&generator=search&gsrnamespace=6&gsrlimit=6&prop=imageinfo&iiprop=url|mime&iiurlwidth=900&gsrsearch=" + encodeURIComponent(q);
-  const res = await fetch(api, { headers: UA, signal: AbortSignal.timeout(7000) });
-  if (!res.ok) return null;
-  const pages = Object.values(((await res.json()).query || {}).pages || {}).sort((a, b) => (a.index || 0) - (b.index || 0));
-  const p = pages.find(x => x.imageinfo && x.imageinfo[0] && /image\/(jpeg|png|webp)/.test(x.imageinfo[0].mime || "") && x.imageinfo[0].thumburl);
-  if (!p) return null;
-  return { url: p.imageinfo[0].thumburl, credit: "Wikimedia Commons", link: p.imageinfo[0].descriptionurl || "" };
-}
-async function handlePhoto(url) {
-  const q = String(url.searchParams.get("q") || "").trim().slice(0, 80);
-  if (!q) return fail("bad_request", "Nothing to search for.");
-  for (const find of [() => openversePhoto(q + " food"), () => openversePhoto(q), () => commonsPhoto(q)]) {
-    try { const r = await find(); if (r) return json(r); } catch {}
-  }
-  return fail("not_found", "No photo found.", 404);
-}
+/* ---------------- page photo ---------------- */
 function pageImage(html, recipe, base) {
   let img = recipe && recipe.image;
   if (Array.isArray(img)) img = img[0];
@@ -392,16 +341,6 @@ async function api(req, env, url, ctx) {
     const r = await stub.startBook();
     return json({ ok: true }, 200, { "set-cookie": sessionCookie(r.token, YEAR * 5) });
   }
-  if (path === "/api/link" && method === "POST") {
-    const b = await req.json().catch(() => ({}));
-    const code = String(b.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-    if (code.length !== 6) return fail("wrong", "Codes are 6 letters and numbers.");
-    const r = await stub.useLink(code, req.headers.get("cf-connecting-ip") || "local");
-    if (r.error === "locked") return fail("locked", "Too many wrong codes. Wait 15 minutes and try again.", 429);
-    if (r.error) return fail("wrong", "That code isn't right, or it's more than an hour old. Get a new one.", 400);
-    return json({ ok: true }, 200, { "set-cookie": sessionCookie(r.token, YEAR * 5) });
-  }
-
   const shareM = path.match(/^\/api\/shares\/([A-Za-z0-9]{6})$/);
   if (shareM && method === "GET") {
     const r = await stub.getShare(shareM[1].toUpperCase());
@@ -439,12 +378,6 @@ async function api(req, env, url, ctx) {
     if (!r) return fail("not_found", "That recipe isn't in the library any more.", 404);
     return json({ recipe: JSON.parse(r.data), author: r.anon ? "" : r.author });
   }
-  if (path === "/api/photo" && method === "GET") return handlePhoto(url);
-  if (path === "/api/link-code" && method === "POST") {
-    const r = await stub.createLink(user.id);
-    if (r.error) return fail("busy", "Couldn't make a code. Try again.", 503);
-    return json({ code: r.code });
-  }
 
   if (path === "/api/docs" && method === "GET") {
     const rows = await stub.listDocs(user.id);
@@ -474,7 +407,12 @@ async function api(req, env, url, ctx) {
   }
 
   if (path === "/api/ai" && method === "POST") return handleAI(req, env, user, stub, ctx);
-  if (path === "/api/credit") return json({ spent: await stub.getSpend(), budget: Number(env.AI_BUDGET_USD) || 0, byKind: await stub.spendByKind() });
+  if (path === "/api/credit") {
+    const owners = String(env.OWNER_USERNAMES || "").toLowerCase().split(/[\s,]+/).filter(Boolean);
+    if (!owners.includes(String(user.username).toLowerCase())) return json({ owner: false });
+    const budget = Number(env.AI_BUDGET_USD) || 0, spent = await stub.getSpend();
+    return json({ owner: true, budget, left: Math.max(0, budget - spent) });
+  }
   if (path === "/api/fetch-url" && method === "POST") return handleFetchUrl(req);
 
   return fail("not_found", "Not found.", 404);
