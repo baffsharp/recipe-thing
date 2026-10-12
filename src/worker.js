@@ -1,0 +1,319 @@
+// The Recipe Thing — server.
+// One Cloudflare Worker: serves the app from /public and answers /api/* requests.
+// Accounts, recipes and shares are stored in a SQLite database inside one Durable Object ("Store").
+import { DurableObject } from "cloudflare:workers";
+
+/* ---------------- helpers ---------------- */
+const json = (data, status = 200, headers = {}) =>
+  new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store", ...headers } });
+const fail = (code, message, status = 400) => json({ error: { code, message } }, status);
+const SESSION_COOKIE = "rt_session";
+const YEAR = 60 * 60 * 24 * 365;
+const sessionCookie = (token, maxAge) => `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+function readCookie(req, name) {
+  for (const part of (req.headers.get("cookie") || "").split(/;\s*/)) {
+    const i = part.indexOf("=");
+    if (i > 0 && part.slice(0, i) === name) return decodeURIComponent(part.slice(i + 1));
+  }
+  return null;
+}
+const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const randomToken = (bytes = 32) => b64(crypto.getRandomValues(new Uint8Array(bytes))).replace(/[+/=]/g, c => ({ "+": "-", "/": "_", "=": "" })[c]);
+const CODE_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const today = () => new Date().toISOString().slice(0, 10);
+
+async function hashPassword(password, saltB64) {
+  const salt = saltB64 ? Uint8Array.from(atob(saltB64), c => c.charCodeAt(0)) : crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations: 100000 }, key, 256);
+  return { hash: b64(bits), salt: b64(salt) };
+}
+function sameString(a, b) {
+  if (a.length !== b.length) return false;
+  let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return d === 0;
+}
+
+/* ---------------- database (Durable Object) ---------------- */
+export class Store extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.sql = ctx.storage.sql;
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT UNIQUE NOT NULL, hash TEXT NOT NULL, salt TEXT NOT NULL, created INTEGER NOT NULL)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, user_id TEXT NOT NULL, created INTEGER NOT NULL)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS docs (user_id TEXT NOT NULL, key TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (user_id, key))`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS shares (code TEXT PRIMARY KEY, user_id TEXT NOT NULL, data TEXT NOT NULL, created INTEGER NOT NULL)`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS usage (user_id TEXT NOT NULL, day TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (user_id, day))`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS attempts (username TEXT PRIMARY KEY, fails INTEGER NOT NULL, until INTEGER NOT NULL)`);
+  }
+  one(q, ...args) { const rows = this.sql.exec(q, ...args).toArray(); return rows[0] || null; }
+
+  newSession(userId) {
+    const token = randomToken();
+    this.sql.exec(`INSERT INTO sessions (token, user_id, created) VALUES (?, ?, ?)`, token, userId, Date.now());
+    return token;
+  }
+  async signup(username, password) {
+    if (this.one(`SELECT id FROM users WHERE username = ?`, username)) return { error: "taken" };
+    const { hash, salt } = await hashPassword(password);
+    const id = "u_" + randomToken(12);
+    this.sql.exec(`INSERT INTO users (id, username, hash, salt, created) VALUES (?, ?, ?, ?, ?)`, id, username, hash, salt, Date.now());
+    return { token: this.newSession(id), username };
+  }
+  async login(username, password) {
+    const lock = this.one(`SELECT fails, until FROM attempts WHERE username = ?`, username);
+    if (lock && lock.until > Date.now()) return { error: "locked" };
+    const u = this.one(`SELECT id, hash, salt FROM users WHERE username = ?`, username);
+    const ok = u && sameString((await hashPassword(password, u.salt)).hash, u.hash);
+    if (!ok) {
+      const fails = (lock ? lock.fails : 0) + 1;
+      const until = fails >= 8 ? Date.now() + 10 * 60 * 1000 : 0;
+      this.sql.exec(`INSERT INTO attempts (username, fails, until) VALUES (?, ?, ?) ON CONFLICT(username) DO UPDATE SET fails = ?, until = ?`, username, fails >= 8 ? 0 : fails, until, fails >= 8 ? 0 : fails, until);
+      return { error: "wrong" };
+    }
+    this.sql.exec(`DELETE FROM attempts WHERE username = ?`, username);
+    return { token: this.newSession(u.id), username };
+  }
+  session(token) {
+    if (!token) return null;
+    return this.one(`SELECT u.id AS id, u.username AS username FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?`, token);
+  }
+  logout(token) { this.sql.exec(`DELETE FROM sessions WHERE token = ?`, token); }
+  listDocs(userId) { return this.sql.exec(`SELECT key, data, updated FROM docs WHERE user_id = ?`, userId).toArray(); }
+  putDoc(userId, key, data) {
+    const count = this.one(`SELECT COUNT(*) AS n FROM docs WHERE user_id = ?`, userId).n;
+    const exists = this.one(`SELECT 1 AS x FROM docs WHERE user_id = ? AND key = ?`, userId, key);
+    if (!exists && count >= 2000) return { error: "full" };
+    this.sql.exec(`INSERT INTO docs (user_id, key, data, updated) VALUES (?, ?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET data = excluded.data, updated = excluded.updated`, userId, key, data, Date.now());
+    return { ok: true };
+  }
+  deleteDoc(userId, key) { this.sql.exec(`DELETE FROM docs WHERE user_id = ? AND key = ?`, userId, key); }
+  createShare(userId, data) {
+    for (let tries = 0; tries < 5; tries++) {
+      let code = ""; for (const b of crypto.getRandomValues(new Uint8Array(6))) code += CODE_ABC[b % CODE_ABC.length];
+      if (this.one(`SELECT 1 AS x FROM shares WHERE code = ?`, code)) continue;
+      this.sql.exec(`INSERT INTO shares (code, user_id, data, created) VALUES (?, ?, ?, ?)`, code, userId, data, Date.now());
+      return { code };
+    }
+    return { error: "busy" };
+  }
+  getShare(code) {
+    const row = this.one(`SELECT s.data AS data, u.username AS sender FROM shares s JOIN users u ON u.id = s.user_id WHERE s.code = ?`, code);
+    return row ? { data: row.data, sender: row.sender } : null;
+  }
+  useAI(userId, perUser, total) {
+    const day = today();
+    const mine = this.one(`SELECT count FROM usage WHERE user_id = ? AND day = ?`, userId, day);
+    const all = this.one(`SELECT COALESCE(SUM(count), 0) AS n FROM usage WHERE day = ?`, day).n;
+    if ((mine ? mine.count : 0) >= perUser) return { ok: false, why: "you" };
+    if (all >= total) return { ok: false, why: "everyone" };
+    this.sql.exec(`INSERT INTO usage (user_id, day, count) VALUES (?, ?, 1) ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1`, userId, day);
+    return { ok: true };
+  }
+}
+
+/* ---------------- AI (Claude Haiku via the Anthropic API) ---------------- */
+async function handleAI(req, env, user, stub) {
+  if (!env.ANTHROPIC_API_KEY) return fail("ai_not_configured", "The AI isn't set up yet. Add ANTHROPIC_API_KEY in Cloudflare.", 503);
+  const body = await req.json().catch(() => null);
+  if (!body || !Array.isArray(body.messages) || !body.messages.length) return fail("bad_request", "Nothing to send.");
+  const msgs = body.messages.slice(-30).map(m => ({ role: m.role === "assistant" ? "assistant" : "user", content: String(m.content || "").slice(0, 300000) })).filter(m => m.content);
+  while (msgs.length && msgs[0].role !== "user") msgs.shift();
+  for (let i = msgs.length - 1; i > 0; i--) if (msgs[i].role === msgs[i - 1].role) { msgs[i - 1].content += "\n\n" + msgs[i].content; msgs.splice(i, 1); }
+  if (!msgs.length || msgs[msgs.length - 1].role !== "user") return fail("bad_request", "The last message must be from you.");
+  const images = Array.isArray(body.images) ? body.images.slice(0, 4) : [];
+  for (const im of images) {
+    if (!/^image\/(jpeg|png|webp|gif)$/.test(im.type || "") || typeof im.data !== "string" || im.data.length > 8_000_000) return fail("image_rejected", "That photo couldn't be read.");
+  }
+  if (images.length) {
+    const last = msgs[msgs.length - 1];
+    last.content = [...images.map(im => ({ type: "image", source: { type: "base64", media_type: im.type, data: im.data } })), { type: "text", text: last.content }];
+  }
+  const limit = await stub.useAI(user.id, Number(env.AI_DAILY_PER_USER) || 80, Number(env.AI_DAILY_TOTAL) || 400);
+  if (!limit.ok) return fail("rate_limited", limit.why === "you" ? "You've used the AI a lot today. Try again tomorrow." : "The app has used its AI for today. Try again tomorrow.", 429);
+
+  const system = [String(body.system || ""), body.json ? "Reply with only valid JSON. No other text, no code fences." : ""].filter(Boolean).join("\n\n") || undefined;
+  const upstream = await fetch((env.ANTHROPIC_BASE_URL || "https://api.anthropic.com") + "/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model: env.AI_MODEL || "claude-haiku-5-5", max_tokens: Math.min(Number(body.maxTokens) || 4096, 8192), system, messages: msgs, stream: true })
+  });
+  if (!upstream.ok) {
+    const text = await upstream.text().catch(() => "");
+    console.log("Anthropic error", upstream.status, text.slice(0, 500));
+    if (upstream.status === 401 || upstream.status === 403) return fail("ai_not_configured", "The AI key isn't working. Check ANTHROPIC_API_KEY in Cloudflare.", 503);
+    if (upstream.status === 429 || upstream.status === 529) return fail("busy", "The AI is busy right now. Try again in a minute.", 503);
+    if (/credit balance/i.test(text)) return fail("no_credit", "The AI account has run out of credit.", 503);
+    return fail("upstream_error", "The AI couldn't answer. Try again.", 502);
+  }
+  // Turn Anthropic's event stream into plain text as it arrives.
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  let buf = "";
+  const stream = new TransformStream({
+    transform(chunk, ctrl) {
+      buf += dec.decode(chunk, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        const data = block.split("\n").filter(l => l.startsWith("data:")).map(l => l.slice(5).trim()).join("");
+        if (!data) continue;
+        let ev; try { ev = JSON.parse(data); } catch { continue; }
+        if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta") ctrl.enqueue(enc.encode(ev.delta.text));
+        else if (ev.type === "error") ctrl.enqueue(enc.encode("\u0000ERROR"));
+      }
+    }
+  });
+  return new Response(upstream.body.pipeThrough(stream), { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } });
+}
+
+/* ---------------- opening recipe links ---------------- */
+function isoMinutes(v) {
+  const m = String(v || "").match(/P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?/i);
+  if (!m) return "";
+  const n = (Number(m[1] || 0) * 1440) + (Number(m[2] || 0) * 60) + Number(m[3] || 0);
+  return n ? n + " minutes" : "";
+}
+function findRecipe(node) {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) { for (const n of node) { const r = findRecipe(n); if (r) return r; } return null; }
+  const t = node["@type"]; if (t === "Recipe" || (Array.isArray(t) && t.includes("Recipe"))) return node;
+  return findRecipe(node["@graph"]) || findRecipe(node.mainEntity) || null;
+}
+const decodeEntities = s => String(s || "").replace(/&deg;/g, "°").replace(/&frac12;/g, "½").replace(/&frac14;/g, "¼").replace(/&frac34;/g, "¾").replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+function instructionsText(ins) {
+  const out = [];
+  const walk = x => {
+    if (!x) return;
+    if (typeof x === "string") out.push(x);
+    else if (Array.isArray(x)) x.forEach(walk);
+    else if (x["@type"] === "HowToSection") { if (x.name) out.push("## " + x.name); walk(x.itemListElement); }
+    else if (x.text) out.push(x.text);
+    else if (x.name) out.push(x.name);
+  };
+  walk(ins);
+  let n = 0;
+  return out.map(s => (s.startsWith("## ") ? s.slice(3) + ":" : (++n) + ". " + decodeEntities(s).replace(/<[^>]+>/g, "").trim())).join("\n");
+}
+async function handleFetchUrl(req) {
+  const body = await req.json().catch(() => null);
+  let url; try { url = new URL(String(body && body.url || "").trim()); } catch { return fail("bad_url", "That doesn't look like a link."); }
+  if (!/^https?:$/.test(url.protocol) || /^(localhost|127\.|10\.|192\.168\.|169\.254\.|0\.|\[)/.test(url.hostname) || /^172\.(1[6-9]|2\d|3[01])\./.test(url.hostname) || !url.hostname.includes(".")) return fail("bad_url", "That link can't be opened.");
+  let res;
+  try {
+    res = await fetch(url.toString(), { redirect: "follow", signal: AbortSignal.timeout(12000), headers: { "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", "accept-language": "en-GB,en;q=0.9,pt;q=0.8" } });
+  } catch { return fail("fetch_failed", "Couldn't open that link. Check it and try again."); }
+  if (!res.ok) return fail("fetch_failed", `That website said no (error ${res.status}). Try copying the recipe text instead.`);
+  const html = (await res.text()).slice(0, 3_000_000);
+  const title = decodeEntities((html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']*)/i) || html.match(/<title[^>]*>([^<]*)/i) || [])[1] || "").trim();
+  // 1) Most recipe websites include the recipe as structured data.
+  for (const m of html.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)) {
+    let data; try { data = JSON.parse(m[1].trim()); } catch { continue; }
+    const r = findRecipe(data);
+    if (r) {
+      const ings = (r.recipeIngredient || r.ingredients || []).map(s => "- " + decodeEntities(s)).join("\n");
+      const text = [`${decodeEntities(r.name || title)}`, r.description ? decodeEntities(r.description).replace(/<[^>]+>/g, "") : "",
+        r.recipeYield ? "Serves/makes: " + [].concat(r.recipeYield).join(", ") : "",
+        isoMinutes(r.prepTime) ? "Prep: " + isoMinutes(r.prepTime) : "", isoMinutes(r.cookTime) ? "Cook: " + isoMinutes(r.cookTime) : "",
+        "Ingredients:\n" + ings, "Method:\n" + instructionsText(r.recipeInstructions)].filter(Boolean).join("\n");
+      return json({ title: decodeEntities(r.name || title), text, structured: true, url: res.url });
+    }
+  }
+  // 2) Video pages: use the description.
+  const yt = html.match(/"shortDescription":"((?:[^"\\]|\\.)*)"/);
+  const meta = (html.match(/<meta[^>]+(?:name|property)=["'](?:og:)?description["'][^>]+content=["']([^"']*)/i) || [])[1] || "";
+  let text = "";
+  if (yt) { try { text = JSON.parse('"' + yt[1] + '"'); } catch {} }
+  // 3) Otherwise, the readable text of the page.
+  if (!text || text.length < 200) {
+    const page = html.replace(/<(script|style|noscript|svg|nav|footer|header|form|iframe)[\s\S]*?<\/\1>/gi, " ")
+      .replace(/<(br|\/p|\/li|\/h\d|\/div|\/tr)[^>]*>/gi, "\n").replace(/<li[^>]*>/gi, "\n- ").replace(/<[^>]+>/g, " ");
+    text = [text, decodeEntities(meta), decodeEntities(page)].filter(Boolean).join("\n");
+  }
+  text = text.replace(/[ \t ]+/g, " ").replace(/\n\s*\n+/g, "\n").trim().slice(0, 50000);
+  if (text.length < 80) return fail("no_recipe", "Couldn't find a recipe on that page. Try copying the recipe text instead.");
+  return json({ title, text, structured: false, url: res.url });
+}
+
+/* ---------------- routes ---------------- */
+const USERNAME_RX = /^[a-z0-9_.-]{3,24}$/;
+const KEY_RX = /^[A-Za-z0-9_.:-]{1,80}$/;
+async function api(req, env, url) {
+  const stub = env.STORE.get(env.STORE.idFromName("main"));
+  const path = url.pathname, method = req.method;
+  if ((method === "POST" || method === "PUT") && !(req.headers.get("content-type") || "").includes("application/json")) return fail("bad_request", "Expected JSON.", 415);
+
+  if (path === "/api/config") return json({ signupCode: !!env.SIGNUP_CODE, ai: !!env.ANTHROPIC_API_KEY });
+
+  if (path === "/api/signup" || path === "/api/login") {
+    if (method !== "POST") return fail("bad_request", "Use POST.", 405);
+    const b = await req.json().catch(() => ({}));
+    const username = String(b.username || "").trim().toLowerCase(), password = String(b.password || "");
+    if (!USERNAME_RX.test(username)) return fail("bad_username", "Usernames are 3 to 24 letters or numbers, no spaces.");
+    if (password.length < 6 || password.length > 200) return fail("bad_password", "Passwords need at least 6 characters.");
+    let r;
+    if (path === "/api/signup") {
+      if (env.SIGNUP_CODE && String(b.code || "").trim() !== env.SIGNUP_CODE) return fail("bad_code", "That invite code isn't right. Ask whoever gave you the app.", 403);
+      r = await stub.signup(username, password);
+      if (r.error === "taken") return fail("taken", "That username is taken. Try another.", 409);
+    } else {
+      r = await stub.login(username, password);
+      if (r.error === "locked") return fail("locked", "Too many wrong tries. Wait 10 minutes and try again.", 429);
+      if (r.error) return fail("wrong", "That username or password isn't right.", 401);
+    }
+    return json({ username: r.username }, 200, { "set-cookie": sessionCookie(r.token, YEAR) });
+  }
+
+  const token = readCookie(req, SESSION_COOKIE);
+  const user = await stub.session(token);
+  if (path === "/api/logout") { if (token) await stub.logout(token); return json({ ok: true }, 200, { "set-cookie": sessionCookie("", 0) }); }
+  if (!user) return fail("signed_out", "Please sign in.", 401);
+
+  if (path === "/api/me") return json({ username: user.username });
+
+  if (path === "/api/docs" && method === "GET") {
+    const rows = await stub.listDocs(user.id);
+    return json({ docs: rows.map(r => ({ key: r.key, data: JSON.parse(r.data), updated: r.updated })) });
+  }
+  const docM = path.match(/^\/api\/docs\/([^/]+)$/);
+  if (docM) {
+    const key = decodeURIComponent(docM[1]);
+    if (!KEY_RX.test(key)) return fail("bad_request", "Bad key.");
+    if (method === "PUT") {
+      const text = await req.text();
+      if (text.length > 600_000) return fail("too_big", "That recipe is too big to save. Try a smaller photo.", 413);
+      try { const v = JSON.parse(text); if (!v || typeof v !== "object" || Array.isArray(v)) throw 0; } catch { return fail("bad_request", "Bad data."); }
+      const r = await stub.putDoc(user.id, key, text);
+      if (r.error) return fail("full", "Your recipe book is full.", 413);
+      return json({ ok: true });
+    }
+    if (method === "DELETE") { await stub.deleteDoc(user.id, key); return json({ ok: true }); }
+  }
+
+  if (path === "/api/shares" && method === "POST") {
+    const text = await req.text();
+    if (text.length > 900_000) return fail("too_big", "That's too much to share at once. Pick fewer recipes.", 413);
+    const r = await stub.createShare(user.id, text);
+    if (r.error) return fail("busy", "Couldn't create a code. Try again.", 503);
+    return json({ code: r.code });
+  }
+  const shareM = path.match(/^\/api\/shares\/([A-Za-z0-9]{6})$/);
+  if (shareM && method === "GET") {
+    const r = await stub.getShare(shareM[1].toUpperCase());
+    if (!r) return fail("not_found", "No recipes found for that code.", 404);
+    return json({ sender: r.sender, ...JSON.parse(r.data) });
+  }
+
+  if (path === "/api/ai" && method === "POST") return handleAI(req, env, user, stub);
+  if (path === "/api/fetch-url" && method === "POST") return handleFetchUrl(req);
+
+  return fail("not_found", "Not found.", 404);
+}
+
+export default {
+  async fetch(req, env) {
+    const url = new URL(req.url);
+    if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
+    try { return await api(req, env, url); }
+    catch (e) { console.log("API error", e && e.stack || e); return fail("server_error", "Something went wrong. Try again.", 500); }
+  }
+};
