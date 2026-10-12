@@ -669,6 +669,9 @@ function libCard(x) {
 function libResultsHtml() {
   const L = S.lib;
   if (!L.results) return `<div class="grid">${"<div class='skel'></div>".repeat(4)}</div>`;
+  const shared = L.shared ? `<button class="banner" data-act="lib-code"><span class="b-ico">${I.share}</span><span class="b-txt"><b>${L.shared.recipes.length === 1 ? "1 recipe" : L.shared.recipes.length + " recipes"} for code ${esc(L.shared.code)}</b><p>${esc(L.shared.recipes.map(r => r.title).join(", "))}</p></span><span class="chev" style="width:18px;height:18px;color:var(--accent)">${I.chev}</span></button>` : "";
+  if (shared && !L.results.length) return shared;
+  if (shared) return shared + `<div class="grid" style="margin-top:12px">${L.results.map(libCard).join("")}</div>`;
   if (!L.results.length) return `<div class="empty"><h3>Nothing found</h3><p>${L.q ? "Try another word, or invent it with AI." : "No one has added recipes yet. Yours will appear here too."}</p></div>`;
   return `<div class="grid">${L.results.map(libCard).join("")}</div>`;
 }
@@ -676,14 +679,16 @@ function viewLibrary() {
   const L = S.lib, f = (id, l) => `<button class="chip" data-act="lib-cat" data-f="${id}" aria-pressed="${L.cat === id}">${l}</button>`;
   return `<div class="wrap stack" style="padding-block:6px 0">
     <header class="pagehead"><h1>Recipe <em>library</em></h1><p>Recipes everyone has added. Tap one to put it in your book.</p></header>
-    <div class="search">${I.search}<input class="input" id="libq" type="search" placeholder="Search, e.g. lasagne or chicken" value="${esc(L.q)}" autocomplete="off" enterkeyhint="search"></div>
+    <div class="search">${I.search}<input class="input" id="libq" type="search" placeholder="Search a recipe, or type a code" value="${esc(L.q)}" autocomplete="off" enterkeyhint="search"></div>
     <div class="chips" role="group" aria-label="Show">${f("", "All")}${f("dinner", "Meals")}${f("dessert", "Desserts")}${f("snack", "Snacks")}</div>
     <div id="libgrid">${libResultsHtml()}</div>
   </div>`;
 }
 let libT = null, libSeq = 0;
 async function loadLibrary() {
-  const L = S.lib, seq = ++libSeq;
+  const L = S.lib, seq = ++libSeq, q = String(L.q || "").trim();
+  L.shared = null;
+  if (/^[A-Za-z0-9]{6}$/.test(q)) { try { const d = await api("GET", "/api/shares/" + q.toUpperCase()); if (seq === libSeq) L.shared = { code: q.toUpperCase(), sender: d.sender, recipes: d.recipes }; } catch {} }
   try {
     const r = await api("GET", "/api/library?q=" + encodeURIComponent(L.q || "") + "&cat=" + encodeURIComponent(L.cat || ""));
     if (seq !== libSeq) return;
@@ -952,15 +957,19 @@ function shareText(rs) {
 const APP_URL = location.origin + "/";
 const CODE_ABC = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 function shareSheet(rs) {
-  S.sheet = { kind: "share", ids: rs.map(r => r.id) };
-  const canApp = !!S.user;
+  S.sheet = { kind: "share", ids: rs.map(r => r.id), code: "" };
   openSheet(`<h2>${rs.length === 1 ? "Share “" + esc(rs[0].title) + "”" : "Share " + rs.length + " recipes"}</h2>
-    ${rs.length > 1 ? `<p class="hint">${esc(rs.map(r => r.title).join(", "))}</p>` : ""}
-    <div id="sharebody" class="stack" style="gap:10px">
-    ${canApp ? `<button class="btn primary block" data-act="share-app">${I.book} Send to someone's app</button><p class="hint" style="margin-top:-4px">They get the recipes straight into their own recipe book.</p>` : ""}
-    ${AI.dl ? `<button class="btn ${canApp ? "" : "primary "}block" data-act="share-pdf">${I.pdf} Send as PDF</button>` : ""}
-    <button class="btn block" data-act="share-copy">${I.copy} Copy as text</button>
-    </div>`);
+    <div class="sharebox" id="sharebox"><span class="hint" style="text-align:center">Send them this code</span><span class="code" id="sharecode"><span class="spin" style="width:26px;height:26px;display:inline-block" aria-hidden="true"></span></span>
+      <span class="hint" style="text-align:center">They type it in their app: <b>+ → Get recipes from someone</b>, or in the <b>library</b> search.</span>
+      <div class="btnrow"><button class="btn primary" data-act="send-code" disabled>${I.share} Send code</button><button class="btn" data-act="copy-code" disabled>${I.copy} Copy code</button></div></div>
+    <span class="eyebrow" style="text-align:center">Or send the recipe itself</span>
+    <div class="btnrow">${AI.dl ? `<button class="btn" data-act="share-pdf">${I.pdf} PDF</button>` : ""}<button class="btn" data-act="share-copy">${I.copy} Text</button></div>`);
+  createShare(rs).then(code => {
+    if (!S.sheet || S.sheet.kind !== "share") return;
+    S.sheet.code = code; $("#sharecode").textContent = code;
+    document.querySelectorAll('[data-act="send-code"],[data-act="copy-code"]').forEach(b => b.disabled = false);
+    if (S.selecting) { S.selecting = false; S.selected.clear(); render(); }
+  }).catch(e => { if (S.sheet && S.sheet.kind === "share" && $("#sharecode")) $("#sharecode").innerHTML = `<span class="hint">${esc(e.message || "Couldn't make a code.")}</span>`; });
 }
 async function createShare(rs) {
   const recipes = rs.map(r => { const c = clone(r); delete c.id; delete c.fav; delete c.example; return c; });
@@ -1152,24 +1161,13 @@ const A = {
   "sel-start"() { S.selecting = true; S.selected.clear(); render(); },
   "sel-cancel"() { S.selecting = false; S.selected.clear(); render(); },
   "sel-share"() { const rs = [...S.selected].map(id => Store.get(id)).filter(Boolean); if (rs.length) shareSheet(rs); },
-  async "share-app"(t) {
-    const rs = S.sheet.ids.map(id => Store.get(id)).filter(Boolean);
-    t.disabled = true; t.innerHTML = `<span class="spin" style="width:20px;height:20px" aria-hidden="true"></span> Making a code…`;
-    let code; try { code = await createShare(rs); } catch (e) { if (e && e.code === "signed_out") return; t.disabled = false; t.innerHTML = `${I.book} Send to someone's app`; toast("Couldn't create a code. Check your connection and try again."); return; }
-    const link = APP_URL + "#get-" + code;
-    S.sheet.link = link; S.sheet.code = code;
-    $("#sharebody").innerHTML = `<div class="sharebox"><span class="label">Send them this link</span><span class="linkline">${esc(link)}</span>
-      <button class="btn primary block" data-act="send-link">${I.share} Send</button>
-      <span class="hint" style="text-align:center">In their app they tap <b>+ → Get recipes from someone</b> and type:</span><span class="code">${code}</span></div>
-      <p class="hint">The message has the code and a link, so it works whether or not they have the app yet.</p><button class="btn block" data-act="sheet-close">Done</button>`;
-    if (S.selecting) { S.selecting = false; S.selected.clear(); render(); }
+  async "send-code"() {
+    const code = S.sheet.code, n = S.sheet.ids.length;
+    const text = `${n === 1 ? "Here's a recipe" : "Here are " + n + " recipes"} for you on recipe thing. In the app, tap + then "Get recipes from someone" and type: ${code}`;
+    if (navigator.share) { try { await navigator.share({ text }); return; } catch (e) { if (e && e.name === "AbortError") return; } }
+    navigator.clipboard.writeText(text).then(() => toast("Copied. Paste it into a message.")).catch(() => toast("Couldn't copy here. The code is " + code));
   },
-  async "send-link"() {
-    const text = `I shared recipes with you on recipe thing. In the app, tap + then "Get recipes from someone" and type ${S.sheet.code}. Or open:`;
-    if (navigator.share) { try { await navigator.share({ title: "Recipes for you", text, url: S.sheet.link }); return; } catch (e) { if (e && e.name === "AbortError") return; } }
-    navigator.clipboard.writeText(text + " " + S.sheet.link).then(() => toast("Copied. Paste it into a message.")).catch(() => toast("Couldn't copy here. Press and hold the link to copy it."));
-  },
-  "copy-link"() { navigator.clipboard.writeText(S.sheet.link).then(() => toast("Link copied. Paste it into a message.")).catch(() => toast("Couldn't copy here. Press and hold the link to copy it.")); },
+  "copy-code"() { navigator.clipboard.writeText(S.sheet.code).then(() => toast("Code copied")).catch(() => toast("Couldn't copy here. The code is " + S.sheet.code)); },
   "get-friend"() { friendSheet(); },
   "friend-go"() { const c = $("#friendcode").value; closeSheet(); openReceive(c); },
   "receive-go"() {
@@ -1318,6 +1316,7 @@ const A = {
   signout() { signOut(); },
   "open-library"() { S.tab = "library"; S.lib = S.lib || { q: "", cat: "", results: null }; render(); window.scrollTo(0, 0); loadLibrary(); },
   "lib-cat"(t) { S.lib.cat = t.dataset.f; S.lib.results = null; render(); loadLibrary(); },
+  "lib-code"() { openReceive(S.lib.shared.code); },
   "lib-open"(t) { openLibRecipe(t.dataset.id); },
   "lib-add"() { const { recipe, author } = S.sheet; closeSheet(); const c = clone(recipe); delete c.private; saveNewRecipe(c, author ? "@" + author : "the recipe library", "library"); },
   "find-photo"(t) { t.disabled = true; const r = Store.get(S.openId) || {}; findPhoto(S.openId, r.photoQuery || r.title, false); }
@@ -1417,7 +1416,6 @@ async function doAuth() {
 }
 async function boot() {
   S.booting = true; S.user = null; render();
-  const code = shareCodeInHash();
   let me = null;
   try { me = await api("GET", "/api/me"); }
   catch (e) {
@@ -1426,7 +1424,6 @@ async function boot() {
   if (me && !me.anonymous) { S.booting = false; signedIn(me.username); return; }
   if (me && me.anonymous) { S.anon = true; try { S.anonCount = (await api("GET", "/api/docs")).docs.filter(d => d.key !== "kitchen").length; } catch {} }
   S.authMode = !S.anon && lsGet("rt-has-account") ? "login" : "signup";
-  if (code) { try { S.landing = { code, data: await api("GET", "/api/shares/" + code) }; } catch {} }
   S.booting = false; render();
 }
 async function signedIn(name) {
@@ -1434,8 +1431,6 @@ async function signedIn(name) {
   S.tab = "recipes"; S.openId = null;
   render(); window.scrollTo(0, 0);
   await Store.load();
-  const code = shareCodeInHash();
-  if (code) { try { history.replaceState(null, "", location.pathname); } catch {} setTimeout(() => openReceive(code), 300); }
 }
 let rebooting = false;
 function onSignedOut() {
