@@ -44,6 +44,7 @@ export class Store extends DurableObject {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS docs (user_id TEXT NOT NULL, key TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (user_id, key))`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS shares (code TEXT PRIMARY KEY, user_id TEXT NOT NULL, data TEXT NOT NULL, created INTEGER NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS usage (user_id TEXT NOT NULL, day TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (user_id, day))`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS ailog (ts INTEGER NOT NULL, kind TEXT NOT NULL, tin INTEGER NOT NULL, tout INTEGER NOT NULL, usd REAL NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS spend (id INTEGER PRIMARY KEY CHECK (id = 1), usd REAL NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS library (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL, cat TEXT NOT NULL, search TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS links (code TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)`);
@@ -175,11 +176,14 @@ export class Store extends DurableObject {
     const row = this.one(`SELECT s.data AS data, u.username AS sender FROM shares s JOIN users u ON u.id = s.user_id WHERE s.code = ?`, code);
     return row ? { data: row.data, sender: row.sender } : null;
   }
-  addSpend(usd) {
+  addSpend(usd, kind, tin, tout) {
     if (!(usd > 0)) return;
+    this.sql.exec(`INSERT INTO ailog (ts, kind, tin, tout, usd) VALUES (?, ?, ?, ?, ?)`, Date.now(), String(kind || "other").slice(0, 20), tin || 0, tout || 0, usd);
+    this.sql.exec(`DELETE FROM ailog WHERE ts < ?`, Date.now() - 60 * 24 * 3600 * 1000);
     this.sql.exec(`INSERT INTO spend (id, usd) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET usd = usd + ?`, usd, usd);
   }
   getSpend() { const r = this.one(`SELECT usd FROM spend WHERE id = 1`); return r ? r.usd : 0; }
+  spendByKind() { return this.sql.exec(`SELECT kind, COUNT(*) AS n, SUM(tin) AS tin, SUM(tout) AS tout, SUM(usd) AS usd FROM ailog GROUP BY kind ORDER BY usd DESC`).toArray(); }
   useAI(userId, perUser, total) {
     const day = today();
     const mine = this.one(`SELECT count FROM usage WHERE user_id = ? AND day = ?`, userId, day);
@@ -230,7 +234,7 @@ async function handleAI(req, env, user, stub, ctx) {
   let buf = "", inTok = 0, outTok = 0;
   const priceIn = Number(env.PRICE_IN_PER_MILLION) || 0.1, priceOut = Number(env.PRICE_OUT_PER_MILLION) || 0.5;
   const stream = new TransformStream({
-    flush() { ctx.waitUntil(stub.addSpend((inTok * priceIn + outTok * priceOut) / 1e6)); },
+    flush() { ctx.waitUntil(stub.addSpend((inTok * priceIn + outTok * priceOut) / 1e6, body.kind, inTok, outTok)); },
     transform(chunk, ctrl) {
       buf += dec.decode(chunk, { stream: true });
       let i;
@@ -312,7 +316,7 @@ async function handleFetchUrl(req) {
       .replace(/<(br|\/p|\/li|\/h\d|\/div|\/tr)[^>]*>/gi, "\n").replace(/<li[^>]*>/gi, "\n- ").replace(/<[^>]+>/g, " ");
     text = [text, decodeEntities(meta), decodeEntities(page)].filter(Boolean).join("\n");
   }
-  text = text.replace(/[ \t ]+/g, " ").replace(/\n\s*\n+/g, "\n").trim().slice(0, 50000);
+  text = text.replace(/[ \t ]+/g, " ").replace(/\n\s*\n+/g, "\n").trim().slice(0, 20000);
   if (text.length < 80) return fail("no_recipe", "Couldn't find a recipe on that page. Try copying the recipe text instead.");
   return json({ title, text, structured: false, url: res.url, image: pageImage(html, null, res.url) });
 }
@@ -470,7 +474,7 @@ async function api(req, env, url, ctx) {
   }
 
   if (path === "/api/ai" && method === "POST") return handleAI(req, env, user, stub, ctx);
-  if (path === "/api/credit") return json({ spent: await stub.getSpend(), budget: Number(env.AI_BUDGET_USD) || 0 });
+  if (path === "/api/credit") return json({ spent: await stub.getSpend(), budget: Number(env.AI_BUDGET_USD) || 0, byKind: await stub.spendByKind() });
   if (path === "/api/fetch-url" && method === "POST") return handleFetchUrl(req);
 
   return fail("not_found", "Not found.", 404);

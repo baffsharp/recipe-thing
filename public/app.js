@@ -276,12 +276,12 @@ async function imageForAI(file) {
   } catch { throw { code: "image_rejected" }; }
   finally { URL.revokeObjectURL(url); }
 }
-async function callAI({ messages, images, json, signal, onText, maxTokens }) {
+async function callAI({ messages, images, json, signal, onText, maxTokens, kind }) {
   const imgs = images && images.length ? await Promise.all([...images].slice(0, 4).map(imageForAI)) : [];
   if (signal && signal.aborted) throw { code: "cancelled" };
   let res;
   try {
-    res = await fetch("/api/ai", { method: "POST", credentials: "same-origin", signal, headers: { "content-type": "application/json" }, body: JSON.stringify({ messages, images: imgs, json: !!json, maxTokens }) });
+    res = await fetch("/api/ai", { method: "POST", credentials: "same-origin", signal, headers: { "content-type": "application/json" }, body: JSON.stringify({ messages, images: imgs, json: !!json, maxTokens, kind: kind || "" }) });
   } catch { throw { code: signal && signal.aborted ? "cancelled" : "offline" }; }
   if (!res.ok) {
     const e = (await res.json().catch(() => ({}))).error || {};
@@ -313,9 +313,9 @@ function parseJsonLoose(t) {
   return undefined;
 }
 const toMessages = input => typeof input === "string" ? [{ role: "user", content: input }] : input;
-const sample = async (input, opts = {}) => ({ text: await callAI({ messages: toMessages(input), images: opts.images, signal: opts.signal, onText: opts.onText }), truncated: false });
+const sample = async (input, opts = {}) => ({ text: await callAI({ messages: toMessages(input), images: opts.images, signal: opts.signal, onText: opts.onText, kind: opts.kind }), truncated: false });
 sample.json = async (input, opts = {}) => {
-  const text = await callAI({ messages: toMessages(input), images: opts.images, signal: opts.signal, onText: opts.onText, json: true, maxTokens: 6000 });
+  const text = await callAI({ messages: toMessages(input), images: opts.images, signal: opts.signal, onText: opts.onText, json: true, maxTokens: 6000, kind: opts.kind });
   const v = parseJsonLoose(text);
   if (v === undefined) throw { code: "invalid_json", text };
   return v;
@@ -377,7 +377,8 @@ Rules:
 - tips: 1 or 2 short, genuinely useful sentences (storing, making ahead, an allergy warning), or "" if there is nothing worth saying.
 - photoQuery: 2 to 4 English words naming the finished dish for a photo search (e.g. "chicken tikka masala", "chocolate mug cake").
 - changes: one sentence on what you adapted for their kitchen or request, or "".
-- LANGUAGE: the source may be in Portuguese (Portugal or Brazil), Spanish or another language. Always write the recipe in clear English. Keep a traditional dish name as it is (e.g. "Bacalhau à Brás", "Pão de Queijo", "Brigadeiro", "Arroz de Pato") and you may add the English in description. Translate ingredient names into English, adding the original in the note when it helps shopping (e.g. item "double cream", note "natas").
+- LANGUAGE: the source may be in Portuguese (Portugal or Brazil), Spanish or another language. Always write the recipe in clear English. Keep a traditional dish name as it is (e.g. "Bacalhau à Brás", "Pão de Queijo", "Brigadeiro", "Arroz de Pato") and you may add the English in description. Translate every ingredient, note and step into English. Apart from the dish name, NO Portuguese or Spanish words may remain anywhere (not "copo", "xícara", "colher", "q.b.", "pitada", "lata", "dente", "gramas", ingredient names or cooking words).
+- READ CAREFULLY: copy every quantity from the source exactly (only converting units); never invent, drop or merge ingredients; keep the steps in the source's order; if the source gives a time or temperature, use it.
 - PORTUGUESE MEASURES, convert them to the cook's measurement preferences: xícara (chá) = 240 ml (Brazil); chávena = 250 ml (Portugal); copo = a glass, about 200 ml (copo americano 190 ml, copo de requeijão 250 ml); colher de sopa = 1 tbsp; colher de sobremesa = 2 tsp; colher de chá = 1 tsp; colher de café = ½ tsp; pitada = pinch; q.b., a gosto = to taste; dente de alho = garlic clove; lata = a tin (e.g. leite condensado 395 g, creme de leite 200 g); pacote = packet. For dry ingredients in cups, give grams when they use grams (1 xícara: farinha de trigo 120 g, açúcar 180 g, arroz 185 g, chocolate em pó 90 g).
 - COMMON TERMS: farinha de trigo = plain flour; fermento em pó / fermento químico = baking powder; fermento biológico = yeast; creme de leite = single cream (Brazil); natas = cream (Portugal); manteiga = butter; requeijão = cream cheese spread; polvilho = tapioca starch; gema / clara = egg yolk / white; forno pré-aquecido = preheated oven; banho-maria = bain-marie; refogar = sauté gently.
 - If the content is not a recipe at all, reply {"error": "short reason"}.`;
@@ -407,7 +408,36 @@ function normalizeRecipe(o) {
     ingredients: ings, steps, tips: String(o.tips || "").trim(), changes: String(o.changes || "").trim(), photoQuery: String(o.photoQuery || "").trim().slice(0, 60)
   };
 }
-async function aiRecipe({ task, content = "", images, extra = "", fresh = false }, signal, onStart) {
+const UNITS_OK = new Set(["", "g", "kg", "ml", "l", "tsp", "tbsp", "cup", "oz", "lb", "pinch"]);
+const FOREIGN_RX = /\b(copos?|x[ií]caras?|ch[áa]venas?|colher(es)?|q\.?\s?b\.?|pitadas?|latas?|dentes?|gramas|farinha|a[çc][úu]car|ovos?|leite|manteiga|azeite|[áa]gua|forno|minutos|sal\b|cebolas?|alho|tomates?|feij[ãa]o|arroz|bacalhau(?! à)|natas|fermento|massa|carne|frango|queijo|picad[oa]|cozinhar|misture|adicione|deixe)\b/i;
+function recipeProblems(r) {
+  const p = [];
+  r.ingredients.forEach(i => {
+    if (!UNITS_OK.has(i.unit)) p.push(`ingredient "${i.item}" uses unit "${i.unit}", which isn't allowed`);
+    if (FOREIGN_RX.test(i.item + " " + i.note)) p.push(`ingredient "${i.item}${i.note ? ", " + i.note : ""}" isn't fully in English`);
+  });
+  r.steps.forEach((s, n) => { if (FOREIGN_RX.test(s.text)) p.push(`step ${n + 1} isn't fully in English`); });
+  if (r.ingredients.length && r.ingredients.filter(i => i.qty == null && !/to taste|optional|for (serving|frying|greasing)/i.test(i.note + " " + i.item)).length > r.ingredients.length / 2) p.push("most ingredients have no amount");
+  if (!r.steps.length) p.push("there are no steps");
+  return p.slice(0, 12);
+}
+async function aiRecipe(args, signal, onStart) {
+  const first = await aiRecipeOnce(args, signal, onStart);
+  const problems = recipeProblems(first);
+  if (!problems.length || signal.aborted) return first;
+  const fixPrompt = `Here is a recipe as JSON, written for a recipe app. Fix ONLY these problems and keep everything else exactly the same:
+- ${problems.join("\n- ")}
+
+${kitchenRules(Store.kitchen())}
+
+${SHAPE}
+
+RECIPE:
+${JSON.stringify(first)}${args.content ? `\n\nTHE ORIGINAL SOURCE (for checking amounts):\n${String(args.content).slice(0, 20000)}` : ""}`;
+  try { const fixed = normalizeRecipe(await AI.fn.json(fixPrompt, { signal, kind: "check" })); return Object.assign(fixed, { photoQuery: first.photoQuery }); }
+  catch (e) { if (e && e.code === "cancelled") throw e; return first; }
+}
+async function aiRecipeOnce({ task, content = "", images, extra = "", fresh = false }, signal, onStart) {
   const prompt = `You turn recipes into clean structured data for a personal recipe-book app.
 
 TASK: ${task}${extra ? `\nExtra request from the cook: ${extra}` : ""}
@@ -415,7 +445,7 @@ TASK: ${task}${extra ? `\nExtra request from the cook: ${extra}` : ""}
 ${kitchenRules(Store.kitchen())}
 
 ${SHAPE}${content ? `\n\nCONTENT:\n${content}` : ""}`;
-  const opts = { signal, onText: onStart, modelTier: "default" };
+  const opts = { signal, onText: onStart, kind: images && images.length ? "photo" : "recipe" };
   if (images && images.length) opts.images = images;
   if (fresh) opts.cache = false;
   return normalizeRecipe(await AI.fn.json(prompt, opts));
@@ -538,6 +568,7 @@ async function paintCredit() {
   const { spent, budget } = creditCache, left = Math.max(0, budget - spent), pct = Math.min(100, (spent / budget) * 100), low = left < budget * 0.2;
   el.hidden = false;
   el.innerHTML = `<b>AI credit</b><div class="meter${low ? " low" : ""}" aria-hidden="true"><i style="width:${Math.max(2, pct)}%"></i></div>
+    ${(creditCache.byKind || []).length ? `<div class="usage tnum">${creditCache.byKind.map(k => `<span>${esc((({ recipe: "Reading recipes", photo: "Reading photos", check: "Checking recipes", ask: "Ask", kitchen: "Kitchen setup", "": "Other", other: "Other" })[k.kind]) || k.kind)} <b>${k.n}×</b> $${k.usd.toFixed(3)}</span>`).join("")}</div>` : ""}
     <p class="hint tnum">$${spent.toFixed(2)} of $${budget.toFixed(2)} used${low ? ". Running low: top up at console.anthropic.com, then raise AI_BUDGET_USD in Cloudflare." : ", about $" + left.toFixed(2) + " left."}</p>`;
 }
 function renderTop() {
@@ -838,7 +869,7 @@ async function saveKitchen() {
     const prompt = `List what each kitchen appliance can do, for a cooking app. Appliances, in the person's words: "${base.appliancesText}"
 Reply with ONLY this JSON: {"appliances": [{"name": "short name, e.g. Ninja Speedi", "uses": "what it can do, under 12 words"}]}
 One entry per separate machine; a multi-cooker is ONE entry listing everything it does (a "Ninja Speedi" air fries, steams, bakes, slow cooks and makes one-pot "rapid" meals). Recognise brand names; if unsure, give your best guess.`;
-    const prof = await runAI("kitchen", "Saving your kitchen", (signal, onStart) => AI.fn.json(prompt, { signal, onText: onStart }).then(normProfile));
+    const prof = await runAI("kitchen", "Saving your kitchen", (signal, onStart) => AI.fn.json(prompt, { signal, onText: onStart, kind: "kitchen" }).then(normProfile));
     base.profile = prof ? { appliances: prof.appliances, hob: "", heat: null } : null;
   } else if (old.profile && old.profile.appliances) base.profile = { appliances: old.profile.appliances, hob: "", heat: null };
   Store.put("kitchen", base); S.kw = null; render(); window.scrollTo(0, 0);
@@ -1071,17 +1102,18 @@ function chatContext() {
   if (S.tab === "kitchen") return { kitchen: true, label: "Your kitchen settings" };
   return null;
 }
-function chatRules(ctx) {
-  const k = Store.kitchen(), rs = Store.recipes();
-  let lib = "", used = 0;
-  for (const r of rs) { const t = recipeText(r); if (used + t.length < 90000) { lib += "\n\n" + t; used += t.length; } else lib += `\n\n${r.title} (${CAT1[catOf(r)]}; ingredients: ${r.ingredients.map(i => i.item).join(", ")})`; }
+function chatRules(ctx, question) {
+  const k = Store.kitchen(), rs = Store.recipes(), q = String(question || "").toLowerCase();
+  const mentioned = rs.filter(r => r.title.toLowerCase().split(/\s+/).filter(w => w.length > 3).some(w => q.includes(w))).slice(0, 3);
+  let lib = rs.map(r => `\n- ${r.title} (${CAT1[catOf(r)]}${totalMins(r) ? ", " + mins(totalMins(r)) : ""}; ${r.ingredients.slice(0, 8).map(i => i.item).join(", ")})`).join("").slice(0, 12000);
+  if (mentioned.length) lib += "\n\nFULL TEXT OF RECIPES THEY MENTIONED:" + mentioned.map(r => "\n\n" + recipeText(r)).join("");
   return `You are the cooking helper inside "The Recipe Thing", someone's personal recipe-book app on their phone. Answer like a friendly, practical cook: short and specific, a few sentences or a short "- " list. No headings, no tables. When you mention a recipe from their book, use its exact name. Give hob heat with their dial numbers and use their appliances where it helps.
 
 ${kitchenRules(k)}
 
 THEIR RECIPE BOOK (${rs.length} recipe${rs.length === 1 ? "" : "s"}):${lib || "\n(empty so far)"}
 ${ctx && ctx.r ? `\nRIGHT NOW THEY ARE LOOKING AT THIS RECIPE${ctx.step != null ? " IN COOKING MODE" : ""} (scaled to ${Math.round(ctx.r.servings * ctx.f)} servings). If they say "this", "it" or "this step", they mean this:\n${recipeText(ctx.r, ctx.f, { step: ctx.step })}\n` : ctx && ctx.kitchen ? "\nRIGHT NOW THEY ARE LOOKING AT THEIR KITCHEN SETTINGS.\n" : ""}
-Reply in the language they write in (Portuguese from Portugal or Brazil is common: match it). You understand Portuguese cooking terms and measures (xícara, chávena, copo, colher de sopa, q.b.).
+Reply in the language they write in (Portuguese from Portugal or Brazil is common: match it). You understand Portuguese cooking terms and measures (xícara = 240 ml, chávena = 250 ml, copo ≈ 200 ml, colher de sopa = tbsp, q.b. = to taste).
 If they ask for a recipe that isn't in their book, write it out with a title line, an "Ingredients" list with amounts, then numbered steps. The app shows a button to save it.`;
 }
 function canAskHtml() {
@@ -1126,8 +1158,8 @@ async function sendChat(text) {
   const ci = $("#chatin"); if (ci) { ci.value = ""; ci.style.height = ""; }
   chatCtl = new AbortController(); S.chatBusy = true; paintChat();
   try {
-    const { text: out } = await AI.fn([{ role: "user", content: chatRules(ctx) }, ...hist], {
-      cache: false, signal: chatCtl.signal, modelTier: "default",
+    const { text: out } = await AI.fn([{ role: "user", content: chatRules(ctx, text) }, ...hist], {
+      cache: false, signal: chatCtl.signal, kind: "ask",
       onText: ({ text: t }) => { msg.content = t; const el = $("#streaming"); if (el) { el.innerHTML = md(t); scrollChat(); } }
     });
     msg.content = out;
