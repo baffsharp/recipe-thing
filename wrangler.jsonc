@@ -19,10 +19,9 @@
     // Which Claude model does the AI work. Haiku is the cheapest.
     "AI_MODEL": "claude-haiku-5-5",
     // Safety limits on AI use, per person per day and for everyone per day.
-    "AI_DAILY_PER_USER": "80",
-    "AI_DAILY_TOTAL": "400"
+    "AI_DAILY_PER_USER": "40",
+    "AI_DAILY_TOTAL": "150"
   }
   // Secrets (set in the Cloudflare dashboard, never in this file):
   //   ANTHROPIC_API_KEY  - required
-  //   SIGNUP_CODE        - optional; if set, new accounts need this code
 }

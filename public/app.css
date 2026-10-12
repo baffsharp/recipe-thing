@@ -410,15 +410,7 @@ textarea.input{resize:vertical;line-height:1.45}
 .banner.slim .chev{width:18px;height:18px;color:var(--accent)}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 
-/* ---- sign in ---- */
+/* ---- splash ---- */
 .splash{min-height:70vh;display:grid;place-items:center}
 .splash .lg{width:72px;height:72px;border-radius:20px;animation:pulse 1.4s ease-in-out infinite}
 .splash .lg b{font-size:40px}.splash .lg i{width:9px;height:9px;margin-bottom:19px}
-.auth{max-width:420px;margin:0 auto;padding:48px 20px 40px;display:flex;flex-direction:column;gap:14px}
-.authlogo .lg{width:76px;height:76px;border-radius:22px;box-shadow:0 10px 30px color-mix(in srgb,var(--a2) 22%,transparent)}
-.authlogo .lg b{font-size:42px}.authlogo .lg i{width:10px;height:10px;margin-bottom:20px;margin-left:2px}
-.authname{font-family:var(--f-display);font-weight:800;font-size:44px;letter-spacing:-.04em;line-height:1;margin-top:8px}
-.authname .wdot{width:12px;height:12px;margin-left:3px}
-.authtag{color:var(--muted);font-size:16.5px;margin-bottom:10px}
-.autherr{color:var(--danger);font-weight:600;font-size:14.5px;min-height:1px}
-.autherr:empty{display:none}

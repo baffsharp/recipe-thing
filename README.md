@@ -23,9 +23,10 @@ cook step by step with timers, and share recipes with friends who use the app.
    `recipe-thing`. Leave the build settings as they are (deploy command `npx wrangler deploy`) and deploy.
 4. Open the new Worker → **Settings → Variables and Secrets → Add**:
    - `ANTHROPIC_API_KEY` (type **Secret**): your Claude API key.
-   - `SIGNUP_CODE` (optional, **Secret**): if set, people need this code to make an account.
-5. Open the `…workers.dev` link it gives you, make your account, and on iPhone tap
-   **Share → Add to Home Screen**.
+5. Open the `…workers.dev` link it gives you and, on iPhone, tap **Share → Add to Home Screen**.
+
+There are no accounts: each phone gets its own recipe book automatically. To open the same book on
+another phone, go to **Kitchen → Use on another phone** for a code, then **I have a code** on the other phone.
 
 Every change pushed to the `main` branch on GitHub goes live by itself.
 

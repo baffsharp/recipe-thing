@@ -1,6 +1,6 @@
 // The Recipe Thing — server.
 // One Cloudflare Worker: serves the app from /public and answers /api/* requests.
-// Accounts, recipes and shares are stored in a SQLite database inside one Durable Object ("Store").
+// Recipe books, recipes and shares are stored in a SQLite database inside one Durable Object ("Store").
 import { DurableObject } from "cloudflare:workers";
 
 /* ---------------- helpers ---------------- */
@@ -44,6 +44,7 @@ export class Store extends DurableObject {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS docs (user_id TEXT NOT NULL, key TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (user_id, key))`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS shares (code TEXT PRIMARY KEY, user_id TEXT NOT NULL, data TEXT NOT NULL, created INTEGER NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS usage (user_id TEXT NOT NULL, day TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (user_id, day))`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS links (code TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS attempts (username TEXT PRIMARY KEY, fails INTEGER NOT NULL, until INTEGER NOT NULL)`);
   }
   one(q, ...args) { const rows = this.sql.exec(q, ...args).toArray(); return rows[0] || null; }
@@ -73,6 +74,34 @@ export class Store extends DurableObject {
     }
     this.sql.exec(`DELETE FROM attempts WHERE username = ?`, username);
     return { token: this.newSession(u.id), username };
+  }
+  // A recipe book with no username or password: the phone keeps a private key (a cookie).
+  startBook() {
+    const id = "u_" + randomToken(12);
+    this.sql.exec(`INSERT INTO users (id, username, hash, salt, created) VALUES (?, ?, '', '', ?)`, id, "book-" + id.slice(2, 10).toLowerCase(), Date.now());
+    return { token: this.newSession(id) };
+  }
+  // A short code to open the same book on another phone. Lasts 1 hour.
+  createLink(userId) {
+    this.sql.exec(`DELETE FROM links WHERE expires < ?`, Date.now());
+    for (let tries = 0; tries < 5; tries++) {
+      let code = ""; for (const b of crypto.getRandomValues(new Uint8Array(6))) code += CODE_ABC[b % CODE_ABC.length];
+      if (this.one(`SELECT 1 AS x FROM links WHERE code = ?`, code)) continue;
+      this.sql.exec(`INSERT INTO links (code, user_id, expires) VALUES (?, ?, ?)`, code, userId, Date.now() + 60 * 60 * 1000);
+      return { code };
+    }
+    return { error: "busy" };
+  }
+  useLink(code, key) {
+    const lock = this.one(`SELECT fails, until FROM attempts WHERE username = ?`, "link:" + key);
+    if (lock && lock.until > Date.now()) return { error: "locked" };
+    const row = this.one(`SELECT user_id FROM links WHERE code = ? AND expires > ?`, code, Date.now());
+    if (!row) {
+      const fails = (lock ? lock.fails : 0) + 1, until = fails >= 10 ? Date.now() + 15 * 60 * 1000 : 0;
+      this.sql.exec(`INSERT INTO attempts (username, fails, until) VALUES (?, ?, ?) ON CONFLICT(username) DO UPDATE SET fails = ?, until = ?`, "link:" + key, fails >= 10 ? 0 : fails, until, fails >= 10 ? 0 : fails, until);
+      return { error: "wrong" };
+    }
+    return { token: this.newSession(row.user_id) };
   }
   session(token) {
     if (!token) return null;
@@ -263,12 +292,31 @@ async function api(req, env, url) {
     return json({ username: r.username }, 200, { "set-cookie": sessionCookie(r.token, YEAR) });
   }
 
+  if (path === "/api/start" && method === "POST") {
+    const r = await stub.startBook();
+    return json({ ok: true }, 200, { "set-cookie": sessionCookie(r.token, YEAR * 5) });
+  }
+  if (path === "/api/link" && method === "POST") {
+    const b = await req.json().catch(() => ({}));
+    const code = String(b.code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (code.length !== 6) return fail("wrong", "Codes are 6 letters and numbers.");
+    const r = await stub.useLink(code, req.headers.get("cf-connecting-ip") || "local");
+    if (r.error === "locked") return fail("locked", "Too many wrong codes. Wait 15 minutes and try again.", 429);
+    if (r.error) return fail("wrong", "That code isn't right, or it's more than an hour old. Get a new one.", 400);
+    return json({ ok: true }, 200, { "set-cookie": sessionCookie(r.token, YEAR * 5) });
+  }
+
   const token = readCookie(req, SESSION_COOKIE);
   const user = await stub.session(token);
   if (path === "/api/logout") { if (token) await stub.logout(token); return json({ ok: true }, 200, { "set-cookie": sessionCookie("", 0) }); }
   if (!user) return fail("signed_out", "Please sign in.", 401);
 
   if (path === "/api/me") return json({ username: user.username });
+  if (path === "/api/link-code" && method === "POST") {
+    const r = await stub.createLink(user.id);
+    if (r.error) return fail("busy", "Couldn't make a code. Try again.", 503);
+    return json({ code: r.code });
+  }
 
   if (path === "/api/docs" && method === "GET") {
     const rows = await stub.listDocs(user.id);

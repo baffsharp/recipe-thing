@@ -505,7 +505,7 @@ function render() {
   if (!signedIn) {
     $("#fab").hidden = true; $("#selbar").hidden = true;
     if (editing()) { S.pendingRender = true; return; }
-    $("#view").innerHTML = S.booting ? `<div class="splash">${I.logo}</div>` : viewAuth();
+    $("#view").innerHTML = `<div class="splash">${I.logo}</div>`;
     return;
   }
   renderTop(); renderTabs(); renderFab(); renderSelbar();
@@ -566,7 +566,7 @@ function filtered() {
 function gridHtml() {
   const all = Store.recipes();
   if (Store.mode === "loading") return `<div class="grid">${"<div class='skel'></div>".repeat(4)}</div>`;
-  if (!all.length) return `<div class="grid">${card(EXAMPLE)}</div><div class="empty"><h3>Your recipe book is empty</h3><p>Snap a cookbook page, import a PDF, paste a recipe or let the AI invent one. The example shows how recipes look.</p><button class="btn primary" data-act="tab" data-tab="add">${I.plus} Add your first recipe</button></div>`;
+  if (!all.length) return `<div class="grid">${card(EXAMPLE)}</div><div class="empty"><h3>Your recipe book is empty</h3><p>Snap a cookbook page, import a PDF, paste a recipe or let the AI invent one. The example shows how recipes look.</p><button class="btn primary" data-act="tab" data-tab="add">${I.plus} Add your first recipe</button><button class="btn ghost" data-act="link-enter">Already have recipes on another phone?</button></div>`;
   const list = filtered();
   if (!list.length) return `<div class="empty"><h3>${S.filter === "fav" && !S.search ? "No favourites yet" : "No matches"}</h3><p>${S.filter === "fav" && !S.search ? "Tap the heart on a recipe to keep it here." : "Try another word, or ask the cook to invent a recipe for it."}</p><button class="btn" data-act="clear-filters">Show all recipes</button></div>`;
   return `<div class="grid">${list.map(card).join("")}</div>`;
@@ -903,8 +903,9 @@ function viewKitchen() {
     </dl></section>
     <button class="btn block" data-act="kq-review">${I.edit} Change something</button>
     <button class="btn ghost" data-act="kreset-ask" style="align-self:center">Start again from scratch</button>
-    <section class="panel"><b>Your account</b><p class="hint">Signed in as <b>${esc(S.user || "")}</b>. Your recipes are saved to your account, so they're on any phone you sign in on.</p>
-      <div class="btnrow"><button class="btn" data-act="backup-pick">${I.pdf} Import a backup</button><button class="btn" data-act="signout">Sign out</button></div></section>
+    <section class="panel"><b>Your recipe book</b><p class="hint">Your recipes are saved online and linked to this phone. To open them on another phone or tablet, get a code.</p>
+      <div class="btnrow"><button class="btn" data-act="link-show">Use on another phone</button><button class="btn" data-act="link-enter">I have a code</button></div>
+      <button class="btn ghost" data-act="backup-pick" style="align-self:flex-start">Import a backup file</button></section>
     ${n ? `<section class="panel"><b>Update my recipes</b><p class="hint">Rewrite the method of all ${n} recipe${n === 1 ? "" : "s"} for this kitchen: your hob numbers, oven, appliances and measurements. The dishes stay the same.</p><button class="btn primary block" data-act="update-all-ask">${I.magic} Update all ${n} recipe${n === 1 ? "" : "s"}</button></section>` : ""}
   </div>`;
 }
@@ -1067,6 +1068,7 @@ async function openReceive(code) {
   if (code.length !== 6) { toast("Codes are 6 letters and numbers. Check it and try again."); return; }
   let d; try { d = await api("GET", "/api/shares/" + code); } catch (e) { if (e.code !== "signed_out") toast(e.code === "not_found" ? "No recipes found for that code. Check it and try again." : e.message, 4000); return; }
   if (!d || !Array.isArray(d.recipes) || !d.recipes.length) { toast("No recipes found for that code. Check it and try again.", 4000); return; }
+  if (/^book-/.test(d.sender || "")) d.sender = "";
   S.sheet = { kind: "receive", recipes: d.recipes, sender: d.sender };
   openSheet(`<h2>${d.recipes.length === 1 ? "A recipe for you" : d.recipes.length + " recipes for you"}</h2><p class="hint">${esc(d.sender || "Someone")} shared ${d.recipes.length === 1 ? "this" : "these"} with you. Untick any you don't want.</p>
     <ul class="pick">${d.recipes.map((r, n) => `<li><label><input type="checkbox" checked data-n="${n}"><span class="e">${esc(emojiOf(r) || "🍽️")}</span><span><b>${esc(r.title)}</b><small class="tnum">${esc([CAT1[catOf(r)], totalMins(r) ? mins(totalMins(r)) : ""].filter(Boolean).join(" · "))}</small></span></label></li>`).join("")}</ul>
@@ -1254,7 +1256,7 @@ const A = {
     $("#sharebody").innerHTML = `<div class="sharebox"><span class="label">Send them this link</span><span class="linkline">${esc(link)}</span>
       <button class="btn primary block" data-act="copy-link">${I.copy} Copy link</button>
       <span class="hint" style="text-align:center">or they can type this code in Add → Get recipes from someone</span><span class="code">${code}</span></div>
-      <p class="hint">If they're new, the link asks them to make a free account first, then the recipes appear.</p><button class="btn block" data-act="sheet-close">Done</button>`;
+      <p class="hint">When they open the link, the app opens with the recipes ready to add. No sign-up needed.</p><button class="btn block" data-act="sheet-close">Done</button>`;
     if (S.selecting) { S.selecting = false; S.selected.clear(); render(); }
   },
   "copy-link"() { navigator.clipboard.writeText(S.sheet.link).then(() => toast("Link copied. Paste it into a message.")).catch(() => toast("Couldn't copy here. Press and hold the link to copy it.")); },
@@ -1408,8 +1410,9 @@ const A = {
   },
   "kq-edit"(t) { const q = S.q; q.snap = clone(q.a); q.snapStale = q.stale; q.mode = "edit"; q.view = "step"; q.steps = [Number(t.dataset.step)]; q.i = 0; render(); window.scrollTo(0, 0); },
   "kq-review"() { startReview(); },
-  "auth-toggle"() { S.authMode = S.authMode === "signup" ? "login" : "signup"; render(); },
-  signout() { signOut(); },
+  "link-show"(t) { showLinkCode(t); },
+  "link-enter"() { enterCodeSheet(); },
+  "link-go"() { useLinkCode(); },
   "backup-pick"() { $("#f-backup").click(); },
   "kreset-ask"() { S.sheet = { kind: "kreset" }; openSheet(`<h2>Start your kitchen again?</h2><p class="muted">This clears your kitchen answers so you can describe it from scratch. Your recipes stay exactly as they are.</p><div class="btnrow"><button class="btn" data-act="sheet-close">Keep it</button><button class="btn primary" data-act="kreset-go">Start again</button></div>`); },
   "kreset-go"() { closeSheet(); Store.put("kitchen", Object.assign({}, DEFAULT_KITCHEN)); S.q = null; S.kc = null; S.kdText = ""; render(); window.scrollTo(0, 0); },
@@ -1451,7 +1454,6 @@ document.addEventListener("input", e => {
 });
 document.addEventListener("submit", e => {
   e.preventDefault();
-  if (e.target.id === "authform") { doAuth(); return; }
   if (e.target.id === "kform") { kcAnswer($("#kin").value); return; }
   if (e.target.id === "chatform") { if (S.chatBusy) { chatCtl && chatCtl.abort(); return; } sendChat($("#chatin").value); }
 });
@@ -1463,41 +1465,22 @@ document.addEventListener("keydown", e => {
     if (e.key === "ArrowLeft" && S.cook.step > 0) { S.cook.step--; renderCook(); }
   }
   if (e.key === "Enter" && e.target.id === "friendcode") { e.preventDefault(); A["friend-go"](); }
+  if (e.key === "Enter" && e.target.id === "linkcode") { e.preventDefault(); useLinkCode(); }
   if (e.key === "Enter" && !e.shiftKey && e.target.id === "kin") { e.preventDefault(); kcAnswer(e.target.value); }
   if (e.key === "Enter" && !e.shiftKey && e.target.id === "chatin" && matchMedia("(pointer:fine)").matches) { e.preventDefault(); sendChat(e.target.value); }
   if (e.key === "Enter" && S.q && /^kq-/.test(e.target.id) && e.target.tagName === "INPUT") { e.preventDefault(); e.target.blur(); A["kq-next"](); }
 });
 window.addEventListener("scroll", () => $("#top").classList.toggle("scrolled", window.scrollY > 4), { passive: true });
 
-/* ---------- accounts ---------- */
-function viewAuth() {
-  const signup = S.authMode === "signup", shared = /^#get-/.test(location.hash);
-  return `<div class="auth">
-    <div class="authlogo">${I.logo}</div>
-    <h1 class="authname">recipe thing<i class="wdot"></i></h1>
-    <p class="authtag">${shared ? "Someone shared recipes with you. " + (signup ? "Make a free account to get them." : "Sign in to get them.") : "All your recipes in one place, written for your kitchen."}</p>
-    <form id="authform" class="stack" style="gap:12px" novalidate>
-      <div class="field"><label for="au-user">Username</label><input class="input" id="au-user" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="${signup ? "Pick one, e.g. luca" : ""}"></div>
-      <div class="field"><label for="au-pass">Password</label><input class="input" id="au-pass" type="password" autocomplete="${signup ? "new-password" : "current-password"}" placeholder="${signup ? "At least 6 characters" : ""}"></div>
-      ${signup && S.needCode ? `<div class="field"><label for="au-code">Invite code</label><input class="input" id="au-code" autocomplete="off" autocapitalize="none" placeholder="Ask whoever sent you the app"></div>` : ""}
-      <p class="autherr" id="autherr" role="alert"></p>
-      <button class="btn primary block" type="submit" id="au-go">${signup ? "Create account" : "Sign in"}</button>
-    </form>
-    <button class="btn ghost" data-act="auth-toggle">${signup ? "I already have an account" : "New here? Create an account"}</button>
-  </div>`;
-}
-async function doAuth() {
-  const btn = $("#au-go"), err = $("#autherr"), signup = S.authMode === "signup";
-  const body = { username: $("#au-user").value.trim(), password: $("#au-pass").value, code: $("#au-code") ? $("#au-code").value.trim() : "" };
-  if (!body.username || !body.password) { err.textContent = "Fill in your username and password."; return; }
-  btn.disabled = true; err.textContent = "";
-  try {
-    const r = await api("POST", signup ? "/api/signup" : "/api/login", body);
-    lsSet("rt-has-account", 1);
-    if (document.activeElement) document.activeElement.blur();
-    signedIn(r.username);
-    if (signup) toast("Welcome! Your recipe book is ready.");
-  } catch (e) { err.textContent = e.message || "Couldn't sign in. Try again."; btn.disabled = false; }
+/* ---------- your recipe book (no accounts: this phone holds a private key) ---------- */
+async function boot() {
+  S.user = null; render();
+  try { const me = await api("GET", "/api/me"); signedIn(me.username); return; }
+  catch (e) {
+    if (e.code === "offline") { const last = lsGet("rt-last-user"); if (last) { S.user = last; render(); Store.load(); return; } toast("You seem to be offline. Check your connection.", 5000); return; }
+  }
+  try { await api("POST", "/api/start", {}); const me = await api("GET", "/api/me"); signedIn(me.username); }
+  catch (e) { toast(e.message || "Couldn't open your recipe book. Try again.", 6000); }
 }
 function signedIn(name) {
   S.user = name; lsSet("rt-last-user", name);
@@ -1508,18 +1491,43 @@ function signedIn(name) {
     if (m) { try { history.replaceState(null, "", location.pathname); } catch {} setTimeout(() => openReceive(m[1]), 300); }
   });
 }
+let rebooting = false;
 function onSignedOut() {
-  if (!S.user) return;
-  S.user = null; Store.data = { recipes: {}, kitchen: null }; Store.mode = "loading";
-  S.authMode = "login"; closeSheet(); S.cook = null; renderCook(); render();
-  toast("Please sign in again.");
+  if (!S.user || rebooting) return;
+  rebooting = true; closeSheet(); S.cook = null; renderCook();
+  boot().finally(() => { rebooting = false; });
 }
-async function signOut() {
-  try { await api("POST", "/api/logout", {}); } catch {}
-  lsSet(Store.cacheKey(), null); lsSet(LS_CHAT, []); lsSet("rt-last-user", null);
-  S.chat = []; S.user = null; S.q = null; S.kc = null; S.authMode = "login";
-  Store.data = { recipes: {}, kitchen: null }; Store.mode = "loading";
-  closeSheet(); render(); window.scrollTo(0, 0);
+async function showLinkCode(t) {
+  t.disabled = true;
+  let code; try { code = (await api("POST", "/api/link-code", {})).code; } catch (e) { t.disabled = false; toast(e.message); return; }
+  t.disabled = false; S.sheet = { kind: "linkcode" };
+  openSheet(`<h2>Use your recipes on another phone</h2>
+    <div class="sharebox"><span class="hint" style="text-align:center">On the other phone or tablet, open the app and tap <b>I have a code</b>, then type:</span><span class="code">${code}</span><span class="hint" style="text-align:center">The code works for 1 hour.</span></div>
+    <p class="hint">Both phones then share the same recipe book. Anything added on one shows up on the other.</p>
+    <button class="btn block" data-act="sheet-close">Done</button>`);
+}
+function enterCodeSheet() {
+  S.sheet = { kind: "entercode" };
+  openSheet(`<h2>I have a code</h2><p class="hint">On the phone that already has your recipes, open the app, go to <b>Kitchen</b> and tap <b>Use on another phone</b>. Type the code it shows here.</p>
+    <input class="input tnum" id="linkcode" placeholder="e.g. K7P2QX" autocomplete="off" autocapitalize="characters" maxlength="8" style="font-size:22px;letter-spacing:.12em;text-align:center;font-weight:700">
+    <button class="btn primary block" data-act="link-go">Open my recipes</button>
+    <p class="hint">Anything already on this phone gets added to that recipe book too.</p>`);
+}
+async function useLinkCode() {
+  const code = ($("#linkcode").value || "").trim();
+  const keep = Store.recipes().map(clone), kitchen = Store.data.kitchen ? clone(Store.data.kitchen) : null;
+  const btn = $('[data-act="link-go"]'); if (btn) btn.disabled = true;
+  try { await api("POST", "/api/link", { code }); }
+  catch (e) { if (btn) btn.disabled = false; toast(e.message, 5000); return; }
+  closeSheet(); lsSet(Store.cacheKey(), null);
+  const me = await api("GET", "/api/me").catch(() => null);
+  if (!me) { boot(); return; }
+  S.user = me.username; lsSet("rt-last-user", me.username);
+  await Store.load();
+  keep.forEach(r => Store.put(newId(), r));
+  if (kitchen && kitchen.setup && !Store.kitchen().setup) Store.put("kitchen", kitchen);
+  S.tab = "recipes"; S.openId = null; render(); window.scrollTo(0, 0);
+  toast("Your recipes are here");
 }
 async function importBackup(file) {
   let data; try { data = JSON.parse(await file.text()); } catch { toast("That file isn't a recipe backup."); return; }
@@ -1533,19 +1541,5 @@ async function importBackup(file) {
 }
 
 /* ---------- boot ---------- */
-S.booting = true;
-render();
-(async () => {
-  try { const c = await fetch("/api/config").then(r => r.json()); S.needCode = !!c.signupCode; } catch {}
-  try {
-    const me = await api("GET", "/api/me");
-    S.booting = false; signedIn(me.username);
-  } catch (e) {
-    S.booting = false;
-    const last = lsGet("rt-last-user");
-    if (e.code === "offline" && last) { S.user = last; render(); Store.load(); return; }
-    S.authMode = lsGet("rt-has-account") && !/^#get-/.test(location.hash) ? "login" : "signup";
-    render();
-  }
-})();
+boot();
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
