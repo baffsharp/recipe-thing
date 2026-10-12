@@ -831,7 +831,7 @@ function viewKitchen() {
   const k = Store.kitchen();
   if (!k.setup && !S.kw) S.kw = { a: kitchenForm(k), i: 0, single: false };
   if (S.kw) return viewKitchenStep();
-  const a = kitchenForm(k), h = heatOf(k), apps = applianceList(k), n = Store.recipes().length;
+  const a = kitchenForm(k), h = heatOf(k), apps = applianceList(k);
   const row = (step, label, value, extra = "") => `<button class="rv" data-act="kw-edit" data-step="${step}"><span class="tx"><span class="eyebrow">${label}</span><b>${value}</b>${extra}</span><span class="chg">Change</span></button>`;
   const ovenTxt = { fan: "Fan oven", conventional: "Oven without a fan", gas: "Gas oven", none: "No oven", unsure: "Not sure what kind" }[a.oven];
   return `<div class="wrap stack" style="padding-block:6px 0">
@@ -844,7 +844,6 @@ function viewKitchen() {
       ${row("avoid", "Doesn't eat", esc(k.avoid || "Eats everything"))}
       ${row("units", "Measurements", { gms: "Grams and spoons", gm: "Grams only", us: "Cups" }[a.units])}
     </div>
-    ${n ? `<section class="panel"><b>Update my recipes</b><p class="hint">Rewrite ${n === 1 ? "your recipe" : "all " + n + " recipes"} for this kitchen, in clear English. The dishes stay the same.</p><button class="btn block" data-act="update-all-ask">${I.magic} ${n === 1 ? "Update it" : "Update all " + n}</button></section>` : ""}
     <section class="panel" id="creditpanel" hidden></section>
     <section class="panel"><b>Your account</b><p class="hint">Signed in as <b>${esc(S.user || "")}</b>. Sign in with the same username on any phone to see your recipes.</p>
       <div class="btnrow"><button class="btn" data-act="backup-pick">Import a backup</button><button class="btn" data-act="signout">Sign out</button></div></section>
@@ -873,29 +872,28 @@ One entry per separate machine; a multi-cooker is ONE entry listing everything i
   Store.put("kitchen", base); S.kw = null; render(); window.scrollTo(0, 0);
   toast(old.setup ? "Kitchen updated" : "All set! New recipes will be written for your kitchen.");
 }
-async function updateAll() {
-  const rs = Store.recipes();
-  if (S.busy || !rs.length) return;
-  const ctl = new AbortController();
+// Recipes from other people were written for their kitchen: rewrite them for this one as they're added.
+async function fitToKitchen(r, signal) {
+  const nr = await aiRecipe({ task: "Rewrite this recipe for this cook's kitchen: their hob numbers, oven, appliances and measurement preferences. Also put everything into clear English (except a traditional dish name) and convert any Portuguese or Brazilian measures using the rules below. It must stay the same dish: keep the same ingredients, amounts (only convert units), servings, category and title.", content: recipeText(r), fresh: true }, signal, () => {});
+  return Object.assign({}, r, { description: nr.description || r.description, ingredients: nr.ingredients, steps: nr.steps, prepMinutes: nr.prepMinutes || r.prepMinutes, cookMinutes: nr.cookMinutes || r.cookMinutes,
+    tips: nr.tips, tags: r.tags && r.tags.length ? r.tags : nr.tags, emoji: r.emoji || nr.emoji, category: r.category || nr.category });
+}
+async function addFromOthers(list, label, kind) {
+  if (S.busy) return;
+  const ctl = new AbortController(), ids = [];
   S.busy = { label: "", line: "", ctl, writing: true };
-  let done = 0, failed = 0, stopMsg = "";
-  for (const r of rs) {
-    if (ctl.signal.aborted) break;
-    S.busy.line = `Updating ${done + failed + 1} of ${rs.length}`; S.busy.label = r.title; renderBusy();
-    try {
-      const nr = await aiRecipe({ task: "Rewrite this recipe for this cook's kitchen: their hob numbers, oven, appliances and measurement preferences. Also put everything into clear English (except a traditional dish name) and convert any Portuguese or Brazilian measures (copo, xícara, chávena, colher...) using the rules below. It must stay the same dish: keep the same ingredients, amounts (only convert units), servings, category and title.", content: recipeText(r), fresh: true }, ctl.signal, () => {});
-      const body = Object.assign({}, r, { description: nr.description || r.description, ingredients: nr.ingredients, steps: nr.steps, prepMinutes: nr.prepMinutes || r.prepMinutes, cookMinutes: nr.cookMinutes || r.cookMinutes,
-        tips: nr.tips, tags: r.tags && r.tags.length ? r.tags : nr.tags, emoji: r.emoji || nr.emoji, category: r.category || nr.category });
-      Store.put(r.id, body); delete S.servings[r.id]; S.checked[r.id] = {}; done++;
-    } catch (e) {
-      const c = e && e.code;
-      if (c === "cancelled") break;
-      if (c === "rate_limited" || c === "no_credit" || c === "ai_not_configured" || c === "offline") { stopMsg = aiCopy(e) + (done ? ` (${done} updated so far.)` : ""); break; }
-      failed++;
+  for (let n = 0; n < list.length; n++) {
+    let r = list[n];
+    if (!ctl.signal.aborted) {
+      S.busy.line = list.length > 1 ? `Fitting ${n + 1} of ${list.length} to your kitchen` : "Fitting it to your kitchen"; S.busy.label = r.title; renderBusy();
+      try { r = await fitToKitchen(r, ctl.signal); } catch {}
     }
+    const id = newId(); ids.push(id);
+    Store.put(id, Object.assign({}, r, { type: "recipe", createdAt: Date.now() + n, fav: false, source: { kind, label } }));
   }
   S.busy = null; renderBusy();
-  toast(stopMsg || `Updated ${done} recipe${done === 1 ? "" : "s"}${failed ? `. ${failed} couldn't be updated, try those with Adjust.` : "."}`, 5000);
+  S.tab = "recipes"; S.openId = ids.length === 1 ? ids[0] : null; S.filter = "all"; render(); window.scrollTo(0, 0);
+  toast(ids.length === 1 ? "Added to your recipes" : ids.length + " recipes added");
 }
 
 /* ---------- sheets ---------- */
@@ -1012,7 +1010,7 @@ async function openReceive(code) {
   openSheet(`<h2>${d.recipes.length === 1 ? "A recipe for you" : d.recipes.length + " recipes for you"}</h2><p class="hint">${esc(d.sender || "Someone")} shared ${d.recipes.length === 1 ? "this" : "these"} with you. Untick any you don't want.</p>
     <ul class="pick">${d.recipes.map((r, n) => `<li><label><input type="checkbox" checked data-n="${n}"><span class="e">${esc(emojiOf(r) || "🍽️")}</span><span><b>${esc(r.title)}</b><small class="tnum">${esc([CAT1[catOf(r)], totalMins(r) ? mins(totalMins(r)) : ""].filter(Boolean).join(" · "))}</small></span></label></li>`).join("")}</ul>
     <button class="btn primary block" data-act="receive-go">${I.plus} Add to my recipes</button>
-    <p class="hint">They were written for the other person's kitchen. To fit them to yours, go to Kitchen and tap Update all.</p>`);
+    <p class="hint">They'll be rewritten for your kitchen as they're added.</p>`);
 }
 function friendSheet() {
   S.sheet = { kind: "friend" };
@@ -1200,16 +1198,9 @@ const A = {
   "receive-go"() {
     const picks = [...document.querySelectorAll('.pick input:checked')].map(i => S.sheet.recipes[Number(i.dataset.n)]).filter(Boolean);
     if (!picks.length) { toast("Tick at least one recipe."); return; }
-    picks.forEach((r, n) => Store.put(newId(), Object.assign({}, r, { type: "recipe", createdAt: Date.now() + n, fav: false, source: { kind: "friend", label: S.sheet.sender ? "@" + S.sheet.sender : "Someone who shared it" } })));
-    closeSheet(); S.tab = "recipes"; S.openId = null; S.filter = "all"; render(); window.scrollTo(0, 0);
-    toast(picks.length === 1 ? "Recipe added" : picks.length + " recipes added");
+    const sender = S.sheet.sender; closeSheet();
+    addFromOthers(picks.map(r => { const c = clone(r); delete c.private; return c; }), sender ? "@" + sender : "Someone who shared it", "friend");
   },
-  "update-all-ask"() {
-    const n = Store.recipes().length; S.sheet = { kind: "updateall" };
-    openSheet(`<h2>${n === 1 ? "Update your recipe?" : "Update all " + n + " recipes?"}</h2><p>Each recipe gets rewritten for your kitchen (hob numbers, oven, gadgets, measurements) and put into clear English, with Portuguese measures like copos converted. The dishes and amounts stay the same.</p><p class="hint">This can take a few minutes. You can keep using the app, and stop it any time.</p>
-      <div class="btnrow"><button class="btn" data-act="sheet-close">Not now</button><button class="btn primary" data-act="update-all-go">${I.magic} Update</button></div>`);
-  },
-  "update-all-go"() { closeSheet(); updateAll(); },
   "share-one"() { const r = Store.get(S.openId); if (r) shareSheet([r]); },
   "share-copy"() {
     const rs = S.sheet.ids.map(id => Store.get(id)).filter(Boolean), txt = shareText(rs);
@@ -1342,7 +1333,7 @@ const A = {
   "lib-cat"(t) { S.lib.cat = t.dataset.f; S.lib.results = null; render(); loadLibrary(); },
   "lib-code"() { openReceive(S.lib.shared.code); },
   "lib-open"(t) { openLibRecipe(t.dataset.id); },
-  "lib-add"() { const { recipe, author } = S.sheet; closeSheet(); const c = clone(recipe); delete c.private; saveNewRecipe(c, author ? "@" + author : "the recipe library", "library"); },
+  "lib-add"() { const { recipe, author } = S.sheet; closeSheet(); const c = clone(recipe); delete c.private; addFromOthers([c], author ? "@" + author : "the recipe library", "library"); },
   "dish-photo"() { S.dishFor = S.openId; $("#f-dish").click(); }
 };
 document.addEventListener("click", e => {
