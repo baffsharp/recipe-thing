@@ -360,7 +360,7 @@ const SHAPE = `Reply with ONLY one JSON object, no other text, in exactly this s
 {"title": string, "description": "one short sentence", "category": "dinner" | "dessert" | "snack", "emoji": "one food emoji that best shows this dish",
  "servings": number, "prepMinutes": number or null, "cookMinutes": number or null, "tags": [strings],
  "ingredients": [{"qty": number or null, "unit": string, "item": string, "note": string, "group": string}],
- "steps": [{"text": string, "minutes": number or null}], "tips": string, "changes": string}
+ "steps": [{"text": string, "minutes": number or null}], "tips": string, "changes": string, "photoQuery": string}
 Rules:
 - category: "dinner" for any proper meal (breakfast, lunch or dinner mains, soups, big salads); "dessert" for sweet things, cakes and baking; "snack" for snacks, sides, dips, drinks and small bites.
 - tags: 2 to 5 lowercase words someone might search for, all clearly true for this recipe: main ingredients, cuisine, type of dish, appliance used (e.g. "chicken", "rice", "portuguese", "curry", "air fryer"). Never vague words like easy, quick, family, healthy, delicious, dinner.
@@ -368,6 +368,7 @@ Rules:
 - group is a section name like "For the sauce" when the recipe has sections, otherwise "".
 - steps: one clear action per step, in order, written for this cook's kitchen. minutes is the cooking, baking, resting or waiting time in that step (for a timer), otherwise null.
 - tips: 1 or 2 short, genuinely useful sentences (storing, making ahead, an allergy warning), or "" if there is nothing worth saying.
+- photoQuery: 2 to 4 English words naming the finished dish for a photo search (e.g. "chicken tikka masala", "chocolate mug cake").
 - changes: one sentence on what you adapted for their kitchen or request, or "".
 - If the content is not a recipe at all, reply {"error": "short reason"}.`;
 function recipeText(r, f = 1, opts = {}) {
@@ -393,7 +394,7 @@ function normalizeRecipe(o) {
     category: CATS[o.category] ? o.category : "dinner", emoji: emoji && emoji.length <= 8 && !/[a-z0-9]/i.test(emoji) ? emoji : "",
     servings: Math.max(1, Math.round(num(o.servings) || 4)), prepMinutes: num(o.prepMinutes), cookMinutes: num(o.cookMinutes),
     tags: [...new Set((Array.isArray(o.tags) ? o.tags : []).map(t => String(t).toLowerCase().trim()).filter(t => t && !BANNED_TAGS.test(t)))].slice(0, 5),
-    ingredients: ings, steps, tips: String(o.tips || "").trim(), changes: String(o.changes || "").trim()
+    ingredients: ings, steps, tips: String(o.tips || "").trim(), changes: String(o.changes || "").trim(), photoQuery: String(o.photoQuery || "").trim().slice(0, 60)
   };
 }
 async function aiRecipe({ task, content = "", images, extra = "", fresh = false }, signal, onStart) {
@@ -505,7 +506,7 @@ function render() {
   if (!signedIn) {
     $("#fab").hidden = true; $("#selbar").hidden = true;
     if (editing()) { S.pendingRender = true; return; }
-    $("#view").innerHTML = `<div class="splash">${I.logo}</div>`;
+    $("#view").innerHTML = S.booting ? `<div class="splash">${I.logo}</div>` : S.landing ? viewLanding() : viewAuth();
     return;
   }
   renderTop(); renderTabs(); renderFab(); renderSelbar();
@@ -513,6 +514,7 @@ function render() {
   const v = $("#view");
   if (S.tab === "recipes") v.innerHTML = S.openId ? viewDetail() : viewRecipes();
   else if (S.tab === "add") v.innerHTML = viewAdd();
+  else if (S.tab === "library") v.innerHTML = viewLibrary();
   else v.innerHTML = viewKitchen();
   paintWake();
   if ($("#creditpanel")) paintCredit();
@@ -531,7 +533,8 @@ async function paintCredit() {
 function renderTop() {
   const r = S.tab === "recipes" && S.openId ? Store.get(S.openId) : null;
   let html;
-  if (r) html = `<button class="iconbtn" data-act="close-recipe" aria-label="Back to recipes">${I.back}</button><div class="spacer"></div>`
+  if (S.tab === "library") html = `<button class="iconbtn" data-act="tab" data-tab="add" aria-label="Back">${I.back}</button><div class="spacer"></div>`;
+  else if (r) html = `<button class="iconbtn" data-act="close-recipe" aria-label="Back to recipes">${I.back}</button><div class="spacer"></div>`
     + (r.example ? "" : `<button class="iconbtn ${r.fav ? "on" : ""}" data-act="fav" data-id="${r.id}" aria-label="${r.fav ? "Remove from favourites" : "Add to favourites"}">${I.heart}</button><button class="iconbtn" data-act="edit" data-id="${r.id}" aria-label="Edit recipe">${I.edit}</button>`);
   else if (S.selecting) html = `<div class="brand"><h1 class="tnum">${S.selected.size ? S.selected.size + " selected" : "Pick recipes to share"}</h1></div><div class="spacer"></div><button class="textbtn" data-act="sel-cancel">Cancel</button>`;
   else html = `<div class="wm">${I.logo}<span>recipe thing<i class="wdot"></i></span></div><div class="spacer"></div>`
@@ -539,14 +542,14 @@ function renderTop() {
   $("#topin").innerHTML = html;
 }
 function renderTabs() {
-  const cur = S.tab;
+  const cur = S.tab === "library" ? "add" : S.tab;
   $("#tabs").innerHTML = `<button class="tab" data-act="tab" data-tab="recipes" ${cur === "recipes" ? 'aria-current="page"' : ""}>${I.book}<span>Recipes</span></button>
     <button class="tab add" data-act="tab" data-tab="add" aria-label="Add a recipe" ${cur === "add" ? 'aria-current="page"' : ""}><span class="plus">${I.plus}</span></button>
     <button class="tab" data-act="tab" data-tab="kitchen" ${cur === "kitchen" ? 'aria-current="page"' : ""}>${I.pan}<span>Kitchen</span></button>`;
 }
 function renderFab() {
   const f = $("#fab");
-  f.hidden = S.chatOpen || S.selecting || !!S.cook || !!S.q || (S.tab === "kitchen" && (!Store.kitchen().setup || !!S.kc));
+  f.hidden = S.chatOpen || S.selecting || !!S.cook || S.tab === "kitchen";
   f.innerHTML = `${I.sparkle}<span>Ask</span>`;
 }
 function renderSelbar() {
@@ -562,11 +565,12 @@ function renderBusy() {
 }
 
 /* ---------- recipes ---------- */
+const photoOf = r => r.photo || r.photoUrl || "";
 function card(r) {
   const meta = [mins(totalMins(r)), r.servings ? "Serves " + r.servings : ""].filter(Boolean).join(" · ");
   const sel = S.selecting && S.selected.has(r.id);
   return `<button class="card ${sel ? "sel" : ""}" data-act="open" data-id="${esc(r.id)}" ${S.selecting ? `aria-pressed="${sel}"` : ""}>
-    <div class="thumb cat-${catOf(r)}">${r.photo ? `<img src="${esc(r.photo)}" alt="" loading="lazy">` : artHtml(r)}
+    <div class="thumb cat-${catOf(r)}">${artHtml(r)}${photoOf(r) ? `<img src="${esc(photoOf(r))}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
       ${r.fav && !S.selecting ? `<span class="fav" aria-label="Favourite">${I.heart}</span>` : ""}${S.selecting ? `<span class="check">${I.tick}</span>` : ""}</div>
     <div class="body"><h3>${esc(r.title)}</h3><span class="meta tnum">${esc(r.example ? "Example · " + meta : meta)}</span></div></button>`;
 }
@@ -578,10 +582,14 @@ function filtered() {
 function gridHtml() {
   const all = Store.recipes();
   if (Store.mode === "loading") return `<div class="grid">${"<div class='skel'></div>".repeat(4)}</div>`;
-  if (!all.length) return `<div class="grid">${card(EXAMPLE)}</div><div class="empty"><h3>Your recipe book is empty</h3><p>Snap a cookbook page, import a PDF, paste a recipe or let the AI invent one. The example shows how recipes look.</p><button class="btn primary" data-act="tab" data-tab="add">${I.plus} Add your first recipe</button><button class="btn ghost" data-act="link-enter">Already have recipes on another phone?</button></div>`;
+  if (!all.length) return `<section class="emptybook"><h3>No recipes yet</h3><p>Add your first one. You can:</p>${waysHtml()}<button class="btn primary block" data-act="tab" data-tab="add">${I.plus} Add a recipe</button></section>`;
   const list = filtered();
   if (!list.length) return `<div class="empty"><h3>${S.filter === "fav" && !S.search ? "No favourites yet" : "No matches"}</h3><p>${S.filter === "fav" && !S.search ? "Tap the heart on a recipe to keep it here." : "Try another word, or ask the cook to invent a recipe for it."}</p><button class="btn" data-act="clear-filters">Show all recipes</button></div>`;
   return `<div class="grid">${list.map(card).join("")}</div>`;
+}
+function waysHtml() {
+  const w = (icon, b, t) => `<li><span class="i">${icon}</span><span><b>${b}</b> ${t}</span></li>`;
+  return `<ul class="ways">${w(I.camera, "Snap a photo", "of a cookbook page or recipe card")}${w(I.paste, "Paste a link", "to any recipe website or video")}${w(I.pdf, "Import a PDF", "recipe file")}${w(I.magic, "Invent one with AI", "by saying what you fancy")}${w(I.search, "Browse the library", "of recipes other people added")}</ul>`;
 }
 function viewRecipes() {
   const k = Store.kitchen(), all = Store.recipes();
@@ -607,9 +615,9 @@ function viewDetail() {
   }).join("");
   const steps = r.steps.map((s, n) => `<li><div class="st"><p>${esc(s.text)}</p>${s.minutes ? `<button class="tbtn" data-act="timer" data-min="${s.minutes}" data-label="Step ${n + 1}">${I.timer} ${esc(mins(s.minutes))} timer</button>` : ""}</div></li>`).join("");
   return `<div class="wrap stack" style="padding-block:4px 0">
-    ${r.photo ? `<img class="dish" src="${esc(r.photo)}" alt="${esc(r.title)}">` : ""}
+    ${photoOf(r) ? `<img class="dish" src="${esc(photoOf(r))}" alt="${esc(r.title)}" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
     <section class="hero">
-      <div class="toprow"><span class="cat">${esc(r.example ? "Example" : CAT1[catOf(r)])}</span>${!r.photo && emojiOf(r) ? `<span class="hemo" aria-hidden="true">${esc(emojiOf(r))}</span>` : ""}</div>
+      <div class="toprow"><span class="cat">${esc(r.example ? "Example" : CAT1[catOf(r)])}</span>${!photoOf(r) && emojiOf(r) ? `<span class="hemo" aria-hidden="true">${esc(emojiOf(r))}</span>` : ""}</div>
       <h2>${esc(r.title)}</h2>${r.description ? `<p>${esc(r.description)}</p>` : ""}
       <div class="facts tnum"><div><small>Prep</small><b>${esc(mins(r.prepMinutes) || "–")}</b></div><div><small>Cook</small><b>${esc(mins(r.cookMinutes) || "–")}</b></div><div><small>Total</small><b>${esc(mins(totalMins(r)) || "–")}</b></div></div>
     </section>
@@ -625,6 +633,8 @@ function viewDetail() {
     ${r.tips ? `<section class="panel"><span class="eyebrow">Good to know</span><p>${esc(r.tips)}</p></section>` : ""}
     ${r.example ? `<button class="btn primary block" data-act="tab" data-tab="add">${I.plus} Add your own recipe</button>` : `
     ${r.source && r.source.url ? `<a class="btn ghost" style="align-self:center" href="${esc(r.source.url)}" target="_blank" rel="noopener">Open the original page</a>` : ""}
+    ${!photoOf(r) && !r.example ? `<button class="btn ghost" style="align-self:center" data-act="find-photo">${I.camera} Find a photo</button>` : ""}
+    ${r.photoCredit || (r.photoUrl && r.source && r.source.kind === "link") ? `<p class="foot">Photo${r.photoCredit ? ": " + esc(r.photoCredit) : " from the original page"}${r.photoLink ? ` · <a href="${esc(r.photoLink)}" target="_blank" rel="noopener">source</a>` : ""}</p>` : ""}
     <p class="foot">${esc(r.source && r.source.label ? "Added from " + (r.source.kind === "link" || r.source.kind === "friend" ? r.source.label : r.source.label.toLowerCase()) : "")}${r.createdAt ? " · " + new Date(r.createdAt).toLocaleDateString() : ""}</p>
     <button class="btn danger block" data-act="delete-ask">Delete recipe</button>`}
   </div>`;
@@ -639,10 +649,51 @@ function viewAdd() {
     <div class="trio">${tile("add-photo", I.camera, "Photo")}${tile("add-pdf", I.pdf, "PDF")}${tile("add-paste", I.paste, "Link or text")}</div>
     <button class="aicard" data-act="add-invent"><span class="o-ico">${I.magic}</span><span class="tx"><b>Invent with AI</b><small>Describe what you fancy and get a full recipe written for your kitchen</small></span><span class="chev" style="width:18px;height:18px;color:var(--accent)">${I.chev}</span></button>
     <div class="addlist">
-      ${row("add-manual", I.pen, "Write it myself", "Type in a family recipe")}
+      ${row("open-library", I.search, "Recipe library", "Search recipes everyone has added")}
       ${row("get-friend", I.share, "Get recipes from someone", "Type the code they sent you")}
     </div>
   </div>`;
+}
+function libCard(x) {
+  const r = { title: x.title, category: x.category, emoji: x.emoji, ingredients: x.ingredients || [] };
+  const meta = [mins(x.mins), x.author ? "by " + x.author : ""].filter(Boolean).join(" · ");
+  return `<button class="card" data-act="lib-open" data-id="${esc(x.id)}"><div class="thumb cat-${catOf(r)}">${artHtml(r)}${x.photoUrl ? `<img src="${esc(x.photoUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}</div>
+    <div class="body"><h3>${esc(x.title)}</h3><span class="meta tnum">${esc(meta)}</span></div></button>`;
+}
+function libResultsHtml() {
+  const L = S.lib;
+  if (!L.results) return `<div class="grid">${"<div class='skel'></div>".repeat(4)}</div>`;
+  if (!L.results.length) return `<div class="empty"><h3>Nothing found</h3><p>${L.q ? "Try another word, or invent it with AI." : "No one has added recipes yet. Yours will appear here too."}</p></div>`;
+  return `<div class="grid">${L.results.map(libCard).join("")}</div>`;
+}
+function viewLibrary() {
+  const L = S.lib, f = (id, l) => `<button class="chip" data-act="lib-cat" data-f="${id}" aria-pressed="${L.cat === id}">${l}</button>`;
+  return `<div class="wrap stack" style="padding-block:6px 0">
+    <header class="pagehead"><h1>Recipe <em>library</em></h1><p>Recipes everyone has added. Tap one to put it in your book.</p></header>
+    <div class="search">${I.search}<input class="input" id="libq" type="search" placeholder="Search, e.g. lasagne or chicken" value="${esc(L.q)}" autocomplete="off" enterkeyhint="search"></div>
+    <div class="chips" role="group" aria-label="Show">${f("", "All")}${f("dinner", "Meals")}${f("dessert", "Desserts")}${f("snack", "Snacks")}</div>
+    <div id="libgrid">${libResultsHtml()}</div>
+  </div>`;
+}
+let libT = null, libSeq = 0;
+async function loadLibrary() {
+  const L = S.lib, seq = ++libSeq;
+  try {
+    const r = await api("GET", "/api/library?q=" + encodeURIComponent(L.q || "") + "&cat=" + encodeURIComponent(L.cat || ""));
+    if (seq !== libSeq) return;
+    L.results = r.results;
+  } catch (e) { if (seq !== libSeq) return; L.results = []; if (e.code !== "signed_out") toast(e.message); }
+  const g = $("#libgrid"); if (g) g.innerHTML = libResultsHtml();
+}
+async function openLibRecipe(id) {
+  let d; try { d = await api("GET", "/api/library/" + encodeURIComponent(id)); } catch (e) { toast(e.message); return; }
+  const r = d.recipe;
+  S.sheet = { kind: "lib", recipe: r, author: d.author };
+  openSheet(`${r.photoUrl ? `<img class="dish" src="${esc(r.photoUrl)}" alt="" referrerpolicy="no-referrer" onerror="this.remove()">` : ""}
+    <span class="eyebrow">${esc(CAT1[catOf(r)])}${d.author ? " · by " + esc(d.author) : ""}</span><h2>${esc(r.title)}</h2>${r.description ? `<p class="muted">${esc(r.description)}</p>` : ""}
+    <div class="section"><span class="label">Ingredients</span><ul class="ings">${(r.ingredients || []).map(i => `<li class="plain">${esc(ingLine(i))}</li>`).join("")}</ul></div>
+    <div class="section"><span class="label">Method</span><ol class="steps">${(r.steps || []).map(s => `<li><div class="st"><p>${esc(s.text)}</p></div></li>`).join("")}</ol></div>
+    <button class="btn primary block" data-act="lib-add">${I.plus} Add to my recipes</button>`);
 }
 const noteField = () => `<div class="field"><label for="addnote">Anything to change? <span class="muted">(optional)</span></label><input class="input" id="addnote" placeholder="e.g. make it for 2, no mushrooms" value="${esc(S.note)}"></div>`;
 function photoSheet() {
@@ -676,250 +727,52 @@ function inventSheet() {
     <button class="btn primary block" data-act="go-invent">${I.magic} Create recipe</button>`);
 }
 
-/* ---------- kitchen ---------- */
-const Q_STEPS = 7;
-function answersFrom(k) {
-  const u = unitsOf(k), oldHob = String(k.hob || k.stoveType || "").toLowerCase();
+/* ---------- kitchen: one simple page ---------- */
+const GADGETS = ["Air fryer", "Microwave", "Food processor", "Mixer", "Blender", "Slow cooker", "Pressure cooker"];
+function kitchenForm(k) {
+  const u = unitsOf(k), txt = k.appliancesText || oldAppliancesText(k);
+  const parts = txt.split(/,\s*/).map(x => x.trim()).filter(Boolean);
+  const gadgets = GADGETS.filter(g => parts.some(p => p.toLowerCase() === g.toLowerCase() || (g === "Mixer" && /mixer/i.test(p))));
+  const other = parts.filter(p => !gadgets.some(g => g.toLowerCase() === p.toLowerCase()) && !(/mixer/i.test(p) && gadgets.includes("Mixer"))).join(", ");
+  const oldHob = String(k.hob || k.stoveType || "").toLowerCase();
   return {
-    appliancesText: k.appliancesText || oldAppliancesText(k),
-    hobType: k.hobType || (/induct/.test(oldHob) ? "induction" : /gas/.test(oldHob) ? "gas" : /electric|ceramic/.test(oldHob) ? "electric" : ""),
-    hobModel: k.hobModel || "", dial: k.dial === "none" || k.dial === "unsure" ? k.dial : "numbers", max: Number(k.stoveMax) || 9,
-    ovenType: k.ovenType || (k.setup ? ovenType(k) : ""), weight: u.weight, liquid: u.liquid, spoons: u.spoons, people: k.people || 2, avoid: k.avoid || "" };
+    hobType: k.hobType && k.hobType !== "unsure" ? k.hobType : (/induct/.test(oldHob) ? "induction" : /gas/.test(oldHob) ? "gas" : /electric|ceramic/.test(oldHob) ? "electric" : ""),
+    dial: !k.setup && !k.hobType ? "" : k.dial === "numbers" ? "n" + (Number(k.stoveMax) || 9) : k.dial === "none" ? "none" : "",
+    ovenType: k.setup || k.ovenType ? (ovenType(k) === "unsure" ? "" : ovenType(k)) : "",
+    gadgets, other, people: k.people || 2, avoid: k.avoid || "",
+    units: u.weight === "oz" ? "us" : u.spoons ? "gms" : "gm"
+  };
 }
-const STALE_KEYS = ["appliancesText", "hobType", "hobModel", "dial", "max"];
-function startQuestions() {
-  S.q = { view: "step", mode: "quiz", steps: [0, 1, 2, 3, 4, 5, 6], i: 0, a: answersFrom(Store.kitchen()), profile: null, stale: true };
-  render(); window.scrollTo(0, 0);
-}
-function startReview() {
-  const k = Store.kitchen();
-  S.q = { view: "review", mode: "review", steps: [], i: 0, a: answersFrom(k), profile: k.profile || null, stale: !k.profile };
-  render(); window.scrollTo(0, 0);
-}
-function draftKitchen() {
-  const a = S.q.a;
-  return { type: "kitchen", setup: true, appliancesText: a.appliancesText.trim(), hobType: a.hobType || "unsure", hobModel: a.hobModel.trim(), dial: a.dial || "unsure", stoveMax: a.dial === "numbers" ? a.max : null,
-    ovenType: a.ovenType || "unsure", weight: a.weight, liquid: a.liquid, spoons: a.spoons, people: a.people, avoid: a.avoid.trim(), profile: S.q.stale ? null : S.q.profile };
-}
-async function parseKitchen(text, label) {
-  const prompt = `Read how someone describes their kitchen and fill in this JSON for a cooking app. Only fill in what they said or what clearly follows from it; use null for anything they didn't mention.
-DESCRIPTION: """${text.slice(0, 4000)}"""
-Reply with ONLY this JSON:
-{"appliancesText": "their appliances besides the hob and oven, as a short plain list, or null",
- "appliances": [{"name": "short name, e.g. Ninja Speedi", "uses": "what it can do, under 12 words"}],
- "hobType": "gas" | "induction" | "electric" | null,
- "hobModel": "brand or model, or null",
- "dial": "numbers" | "none" | null,
- "stoveMax": highest number on the hob controls, or null,
- "heat": {"low": "", "mediumLow": "", "medium": "", "mediumHigh": "", "high": ""} or null,
- "ovenType": "fan" | "conventional" | "gas" | "none" | null,
- "weight": "g" | "oz" | null, "liquid": "ml" | "cup" | null, "spoons": true | false | null,
- "people": number or null, "avoid": "allergies or foods they won't eat, or null"}
-Rules: one appliance entry per separate machine; a multi-cooker is ONE entry listing everything it does (a "Ninja Speedi" air fries, steams, bakes, slow cooks and makes one-pot "rapid" meals with grains and protein together). Recognise brand names. A ceramic or glass hob with rings that glow is "electric". "heat" only when dial is "numbers" and you know stoveMax: each value is the number to use, as text, suited to that hob type (induction heats fast, so medium sits lower). A gas hob usually has no numbers unless they say so.`;
-  const o = await runAI("kitchen", label || "Reading your kitchen", (signal, onStart) => AI.fn.json(prompt, { signal, onText: onStart, modelTier: "default", cache: false }));
-  return o && typeof o === "object" && !Array.isArray(o) ? o : null;
-}
-function applyParsed(o) {
-  const a = answersFrom({}), pick = (v, ok) => v != null && v !== "" && (!ok || ok.includes(v));
-  if (pick(o.appliancesText)) a.appliancesText = String(o.appliancesText);
-  if (pick(o.hobType, ["gas", "induction", "electric"])) a.hobType = o.hobType;
-  if (pick(o.hobModel)) a.hobModel = String(o.hobModel);
-  a.dial = pick(o.dial, ["numbers", "none"]) ? o.dial : "";
-  if (Number(o.stoveMax) > 1) a.max = Math.min(20, Math.round(Number(o.stoveMax)));
-  if (pick(o.ovenType, ["fan", "conventional", "gas", "none"])) a.ovenType = o.ovenType;
-  if (pick(o.weight, ["g", "oz"])) a.weight = o.weight;
-  if (pick(o.liquid, ["ml", "cup"])) a.liquid = o.liquid;
-  if (typeof o.spoons === "boolean") a.spoons = o.spoons;
-  if (Number(o.people) > 0) a.people = Math.min(20, Math.round(Number(o.people)));
-  if (pick(o.avoid) && !/^(none|nothing|no)$/i.test(o.avoid)) a.avoid = String(o.avoid);
-  const missing = [];
-  if (!pick(o.hobType, ["gas", "induction", "electric"])) missing.push(1);
-  if (!pick(o.dial, ["numbers", "none"]) || (o.dial === "numbers" && !(Number(o.stoveMax) > 1))) missing.push(2);
-  if (!pick(o.ovenType, ["fan", "conventional", "gas", "none"])) missing.push(3);
-  let profile = null;
-  try { profile = normProfile({ appliances: o.appliances, hob: "", heat: o.heat && o.dial === "numbers" ? Object.assign({ numbered: true }, o.heat) : null }); } catch {}
-  const stale = !profile || missing.includes(1) || missing.includes(2) || (!profile.heat && a.dial === "numbers");
-  return { a, missing, profile, stale };
-}
-
-/* ---------- kitchen setup chat ---------- */
-const KQ = {
-  appliances: { q: "First up: what appliances do you have, besides the hob and oven?", help: "Brands are fine. If one machine does lots of jobs, like a Ninja Speedi, just say so.", multi: true,
-    chips: ["Air fryer", "Microwave", "Food processor", "Stand mixer", "Hand mixer", "Blender", "Slow cooker", "Pressure cooker"], none: "None of these" },
-  hob: { q: "What kind of hob do you have?", help: "The top part where the pans go.", chips: [["Gas", "gas"], ["Induction", "induction"], ["Electric (glass or rings)", "electric"], ["Not sure", "unsure"]] },
-  dial: { q: "How do you set the heat on it?", help: "If it has numbers, recipes can tell you exactly what to turn it to.", chips: [["Numbers 1 to 9", "n9"], ["Numbers 1 to 6", "n6"], ["Numbers 1 to 12", "n12"], ["No numbers", "none"], ["Not sure", "unsure"]] },
-  oven: { q: "And your oven?", help: "A gas hob doesn't always mean a gas oven. If you light the oven with a flame, it's gas.", chips: [["Fan oven", "fan"], ["Conventional, no fan", "conventional"], ["Gas oven", "gas"], ["Not sure", "unsure"], ["No oven", "none"]] },
-  measure: { q: "How do you like to measure things?", chips: [["Grams, ml and spoons", "gms"], ["Grams and ml, no spoons", "gm"], ["Cups and ounces", "us"]] },
-  people: { q: "How many people do you usually cook for?", chips: [["1", "1"], ["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"], ["6", "6"]] },
-  avoid: { q: "Last one: anything you can't or won't eat?", help: "Allergies, or foods you just don't like.", chips: [["Nothing", "nothing"]] }
-};
-const KQ_ORDER = ["appliances", "hob", "dial", "oven", "measure", "people", "avoid"];
-const KQ_AGAIN = { 1: "hob", 2: "dial", 3: "oven" };
-function startKChat() {
-  S.kc = { msgs: [{ from: "bot", text: "Hi! A few quick questions about your kitchen, so every recipe gets written for what you actually have." }], queue: [...KQ_ORDER], answers: {}, asked: {}, picks: [], busy: false };
-  askNext();
-}
-function askNext() {
-  const c = S.kc, key = c.queue[0]; if (!key) return;
-  c.asked[key] = (c.asked[key] || 0) + 1;
-  c.msgs.push({ from: "bot", text: c.asked[key] > 1 ? "Sorry, I didn't quite catch that one. " + KQ[key].q : KQ[key].q, help: KQ[key].help });
-  c.picks = [];
-}
-function kchipsHtml() {
-  const c = S.kc; if (!c || c.busy || !c.queue.length) return "";
-  const q = KQ[c.queue[0]];
-  if (q.multi) return q.chips.map(t => `<button class="chip" data-act="kc-tog" data-v="${esc(t)}" aria-pressed="${c.picks.includes(t)}">${esc(t)}</button>`).join("") + `<button class="chip" data-act="kc-send" data-v="none" data-t="${esc(q.none)}">${esc(q.none)}</button>`;
-  return q.chips.map(([t, v]) => `<button class="chip" data-act="kc-send" data-v="${esc(v)}" data-t="${esc(t)}">${esc(t)}</button>`).join("");
-}
-function kmsgsHtml() {
-  const c = S.kc;
-  return c.msgs.map(m => m.from === "bot"
-    ? `<div class="kmsg bot"><span class="kav">${I.logo}</span><div class="bub">${esc(m.text)}${m.help ? `<small>${esc(m.help)}</small>` : ""}</div></div>`
-    : `<div class="kmsg me"><div class="bub">${esc(m.text)}</div></div>`).join("")
-    + (c.busy ? `<div class="kmsg bot"><span class="kav">${I.logo}</span><div class="bub typing"><i></i><i></i><i></i></div></div>` : "");
-}
-function viewKChat() {
-  const c = S.kc;
-  return `<div class="wrap stack" style="padding-block:6px 0">
-    <header class="pagehead"><h1>My <em>kitchen</em></h1></header>
-    <div class="kmsgs" id="kmsgs">${kmsgsHtml()}</div>
-    <div class="chips wrapit kchips" id="kchips">${kchipsHtml()}</div>
-    <form class="chatform kform" id="kform"><textarea id="kin" rows="1" placeholder="Type your answer…" aria-label="Your answer"></textarea><button class="send" type="submit" aria-label="Send">${I.send}</button></form>
-  </div>`;
-}
-function paintKChat() {
-  if (!S.kc || !$("#kmsgs")) { render(); return; }
-  $("#kmsgs").innerHTML = kmsgsHtml(); $("#kchips").innerHTML = kchipsHtml();
-  const kin = $("#kin"); if (kin) kin.disabled = !!S.kc.busy;
-  requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }));
-}
-async function kcAnswer(text, value) {
-  const c = S.kc; text = String(text || "").trim();
-  if (!c || c.busy || !text || !c.queue.length) return;
-  const key = c.queue.shift();
-  c.msgs.push({ from: "me", text }); c.answers[key] = { text, value: value || null };
-  const kin = $("#kin"); if (kin && !value) { kin.value = ""; kin.style.height = ""; }
-  if (c.queue.length) { askNext(); paintKChat(); return; }
-  c.busy = true; paintKChat();
-  const transcript = KQ_ORDER.filter(k => c.answers[k]).map(k => `Q: ${KQ[k].q}\nA: ${c.answers[k].text}`).join("\n");
-  const o = AI.fn ? await parseKitchen(transcript, "Putting your kitchen together") : null;
-  if (!S.kc) return;
-  c.busy = false;
-  const res = applyParsed(o || {});
-  applyChips(res.a, c.answers);
-  const still = [];
-  if (!res.a.hobType) still.push(1);
-  if (!res.a.dial) still.push(2);
-  if (!res.a.ovenType) still.push(3);
-  const again = still.map(n => KQ_AGAIN[n]).filter(k => (c.asked[k] || 0) < 2);
-  if (again.length && o) { c.queue = again; askNext(); paintKChat(); return; }
-  const chipHeat = c.answers.dial && c.answers.dial.value;
-  if (chipHeat || (c.answers.hob && c.answers.hob.value)) res.stale = true;
-  S.kc = null; if (document.activeElement) document.activeElement.blur();
-  S.q = { view: "review", mode: "review", steps: [], i: 0, a: res.a, profile: res.profile, stale: res.stale || !o };
-  render(); window.scrollTo(0, 0);
-}
-function applyChips(a, ans) {
-  const v = k => ans[k] && ans[k].value;
-  if (ans.appliances) { if (v("appliances") === "none") a.appliancesText = ""; else if (!a.appliancesText) a.appliancesText = ans.appliances.text; }
-  if (v("hob")) a.hobType = v("hob") === "unsure" ? "unsure" : v("hob");
-  const d = v("dial"); if (d) { if (d[0] === "n" && d !== "none") { a.dial = "numbers"; a.max = Number(d.slice(1)); } else a.dial = d; }
-  if (v("oven")) a.ovenType = v("oven");
-  const m = v("measure"); if (m) Object.assign(a, m === "us" ? { weight: "oz", liquid: "cup", spoons: true } : { weight: "g", liquid: "ml", spoons: m === "gms" });
-  if (v("people")) a.people = Number(v("people"));
-  if (v("avoid") === "nothing") a.avoid = "";
-  else if (ans.avoid && !a.avoid && !/^(no|none|nothing|nope|nada)\.?$/i.test(ans.avoid.text)) a.avoid = ans.avoid.text;
-}
-function viewQuestion() {
-  const a = S.q.a, step = S.q.steps[S.q.i];
-  const choice = (key, v, title, sub) => `<button class="choice" data-act="kq-pick" data-key="${key}" data-v="${v}" aria-pressed="${String(a[key]) === String(v)}"><span class="rad"></span><span>${title}${sub ? `<small>${sub}</small>` : ""}</span></button>`;
-  const seg = (key, opts) => `<div class="seg" role="group">${opts.map(([v, l]) => `<button data-act="kq-pick" data-key="${key}" data-v="${v}" aria-pressed="${String(a[key]) === String(v)}">${l}</button>`).join("")}</div>`;
-  let h = "", body = "";
-  if (step === 0) {
-    h = `<h2 class="qh">What appliances do you have?</h2><p class="hint">Not counting the hob and oven. Do you have an air fryer, microwave, food processor, mixer, blender, slow cooker or pressure cooker? Tell us in your own words, including brands. If one machine does several jobs, just say so.</p>`;
-    body = `<textarea class="input" id="kq-appliancesText" rows="4" placeholder="e.g. A Ninja Speedi, which air fries, steams and slow cooks. Also a microwave and a hand mixer.">${esc(a.appliancesText)}</textarea>
-      <div class="field"><span class="hint">Or tap to add:</span><div class="chips wrapit">${APPL_CHIPS.map(c => `<button class="chip" data-act="kq-add" data-v="${c}">${I.plus.replace("<svg", '<svg style="width:14px;height:14px"')} ${c}</button>`).join("")}</div></div>`;
-  } else if (step === 1) {
-    h = `<h2 class="qh">What kind of hob do you have?</h2><p class="hint">The hob is the top part where you put pans.</p>`;
-    body = `<div class="choices">${choice("hobType", "gas", "Gas", "You cook over real flames")}${choice("hobType", "induction", "Induction", "Flat black glass that only heats pans, and heats up very fast")}${choice("hobType", "electric", "Electric", "Glass top with rings that glow red (sometimes called ceramic), or metal plates")}${choice("hobType", "unsure", "Not sure")}</div>
-      <div class="field"><label for="kq-hobModel">Brand or model <span class="muted">(optional)</span></label><input class="input" id="kq-hobModel" value="${esc(a.hobModel)}" placeholder="e.g. Bosch" autocomplete="off"></div>`;
-  } else if (step === 2) {
-    h = `<h2 class="qh">How do you set the heat on your hob?</h2><p class="hint">So recipes can tell you exactly what to turn it to, like “fry on 6”.</p>`;
-    body = `<div class="choices">${choice("dial", "numbers", "Numbers", "A dial or touch buttons, like 1 to 9")}${choice("dial", "none", "No numbers", "A knob you turn between small and big flame")}${choice("dial", "unsure", "Not sure")}</div>
-      ${a.dial === "numbers" ? `<div class="field"><span class="label">What's the highest number?</span><div class="chips wrapit">${[6, 9, 10, 12, 15].map(n => `<button class="chip tnum" data-act="kq-pick" data-key="max" data-v="${n}" aria-pressed="${a.max === n}">${n}</button>`).join("")}</div><span class="hint">We work out which numbers mean low, medium and high for your hob.</span></div>` : ""}`;
-  } else if (step === 3) {
-    h = `<h2 class="qh">What kind of oven do you have?</h2><p class="hint">A gas hob doesn't always mean a gas oven. If you light the oven with a flame, it's gas.</p>`;
-    body = `<div class="choices">${choice("ovenType", "fan", "Fan oven", "Has a fan at the back, and a fan symbol on the dial")}${choice("ovenType", "conventional", "Conventional", "Electric with no fan, heats from the top and bottom")}${choice("ovenType", "gas", "Gas oven", "Has a flame inside and a gas mark dial")}${choice("ovenType", "unsure", "Not sure", "Recipes will give the temperature for both")}${choice("ovenType", "none", "No oven")}</div>`;
-  } else if (step === 4) {
-    h = `<h2 class="qh">How do you like to measure?</h2>`;
-    body = `<div class="field"><span class="label">Weight</span>${seg("weight", [["g", "Grams"], ["oz", "Ounces"]])}</div>
-      <div class="field"><span class="label">Liquids</span>${seg("liquid", [["ml", "Millilitres"], ["cup", "Cups"]])}</div>
-      <div class="field"><span class="label">Teaspoons and tablespoons for small amounts?</span>${seg("spoons", [["true", "Yes"], ["false", "No"]])}<span class="hint">Like 1 tsp salt or 2 tbsp oil.</span></div>`;
-  } else if (step === 5) {
-    h = `<h2 class="qh">How many people do you usually cook for?</h2><p class="hint">New recipes start at this number. You can always change servings on a recipe.</p>`;
-    body = `<div class="bignum"><button data-act="kq-people" data-d="-1" aria-label="Fewer">−</button><span class="tnum">${a.people}</span><button data-act="kq-people" data-d="1" aria-label="More">+</button></div>`;
-  } else {
-    h = `<h2 class="qh">Anything you can't or won't eat?</h2><p class="hint">Allergies or foods you don't like. Leave it empty if there's nothing.</p>`;
-    body = `<input class="input" id="kq-avoid" value="${esc(a.avoid)}" placeholder="e.g. nuts, mushrooms" autocomplete="off">`;
-  }
-  const n = S.q.steps.length, i = S.q.i, edit = S.q.mode === "edit";
-  return `<div class="wrap stack" style="padding-block:8px 0">
-    ${edit ? "" : `<div class="qprog" aria-hidden="true"><i style="width:${((i + 1) / n) * 100}%"></i></div>
-    <span class="eyebrow tnum">${S.q.mode === "follow" ? (n === 1 ? "One quick question" : `Just ${n} quick questions · ${i + 1} of ${n}`) : `Question ${i + 1} of ${n}`}</span>`}
-    ${h}${body}
-    <div class="qnav"><button class="btn" data-act="kq-back">${edit || i === 0 ? "Cancel" : "Back"}</button><button class="btn primary" data-act="kq-next">${edit ? "Done" : i === n - 1 ? (S.q.mode === "quiz" ? "Next" : "Next") : "Next"}</button></div>
-  </div>`;
-}
-function reviewHtml() {
-  const k = draftKitchen(), h = heatOf(k), u = unitsOf(k), apps = applianceList(k);
-  const row = (step, label, value, extra = "") => `<button class="rv" data-act="kq-edit" data-step="${step}"><span class="tx"><span class="eyebrow">${label}</span><b>${value}</b>${extra}</span><span class="chg">Change</span></button>`;
-  return `<div class="wrap stack" style="padding-block:6px 0">
-    <header class="pagehead"><h1>Your <em>kitchen</em></h1><p>${S.q.mode === "review" && Store.kitchen().setup ? "Tap anything to change it." : "Check this looks right. Tap anything to change it."}</p></header>
-    <div class="rvlist">
-      ${row(0, "Appliances", apps.length ? esc(apps.map(x => x.name).join(", ")) : "Just the hob and oven", apps.some(x => x.uses) ? `<small>${esc(apps.filter(x => x.uses).map(x => x.name + ": " + x.uses).join(" · "))}</small>` : "")}
-      ${row(1, "Hob", esc(HOBS[k.hobType] + (k.hobModel ? ", " + k.hobModel : "")))}
-      ${row(2, "Hob heat", h.numbered ? `Numbers 1 to ${k.stoveMax}` : "No numbers", h.numbered ? `<div class="heat tnum"><span>Low <b>${esc(h.low)}</b></span><span>Medium <b>${esc(h.medium)}</b></span><span>High <b>${esc(h.high)}</b></span></div>` : "")}
-      ${row(3, "Oven", esc(OVENS[k.ovenType]))}
-      ${row(4, "Measurements", `${u.weight === "oz" ? "Ounces" : "Grams"}, ${u.liquid === "cup" ? "cups" : "millilitres"}${u.spoons ? ", tsp and tbsp" : ""}`)}
-      ${row(5, "Cooking for", `${k.people} ${k.people === 1 ? "person" : "people"}`)}
-      ${row(6, "Avoid", esc(k.avoid || "Nothing"))}
-    </div>
-    <div class="btnrow"><button class="btn" data-act="kq-cancel">Cancel</button><button class="btn primary" data-act="kq-save">Save my kitchen</button></div>
-  </div>`;
+function kfToKitchen(f, profile) {
+  const appliancesText = [...f.gadgets, ...(f.other.trim() ? [f.other.trim()] : [])].join(", ");
+  const dialNum = /^n\d+$/.test(f.dial);
+  return { type: "kitchen", setup: true, appliancesText, hobType: f.hobType || "unsure", hobModel: "", dial: dialNum ? "numbers" : f.dial === "none" ? "none" : "unsure",
+    stoveMax: dialNum ? Number(f.dial.slice(1)) : null, ovenType: f.ovenType || "unsure",
+    weight: f.units === "us" ? "oz" : "g", liquid: f.units === "us" ? "cup" : "ml", spoons: f.units !== "gm", people: f.people, avoid: f.avoid.trim(), profile: profile || null };
 }
 function viewKitchen() {
-  if (S.q && S.q.view === "review") return reviewHtml();
-  if (S.q) return viewQuestion();
   const k = Store.kitchen();
-  if (!k.setup && AI.fn) { if (!S.kc) startKChat(); return viewKChat(); }
-  if (!k.setup) {
-    if (AI.ready && !AI.fn) return `<div class="wrap stack" style="padding-block:8px 0"><header class="pagehead"><h1>My <em>kitchen</em></h1><p>A few quick questions so recipes are written for your kitchen.</p></header><button class="btn primary block" data-act="kq-start">Start</button></div>`;
-    return `<div class="wrap stack" style="padding-block:8px 0">
-    <header class="pagehead"><h1>My <em>kitchen</em></h1><p>Tell us about it in your own words, like you'd tell a friend. Recipes then get written for exactly what you have.</p></header>
-    <textarea class="input kd" id="kd-text" rows="7" placeholder="e.g. I have a gas hob, the knobs don't have numbers. A fan oven. A Ninja Speedi that air fries and slow cooks, and a hand mixer. I like grams and ml but also teaspoons. Usually cooking for 4, no mushrooms.">${esc(S.kdText || "")}</textarea>
-    <div class="mention"><span class="eyebrow">Try to mention</span><ul><li>Your appliances, brands are fine</li><li>Your hob, and if the heat has numbers</li><li>Your oven</li><li>How you measure, how many you cook for, and anything you avoid</li></ul></div>
-    <button class="btn primary block" data-act="kd-go">${I.magic} Set up my kitchen</button>
-    <button class="btn ghost" data-act="kq-start" style="align-self:center">Answer questions one by one instead</button>
-  </div>`;
-  }
-  const h = heatOf(k), apps = applianceList(k), u = unitsOf(k), n = Store.recipes().length;
+  if (!S.kf) S.kf = kitchenForm(k);
+  const f = S.kf;
+  const one = (key, opts) => `<div class="pills" role="group">${opts.map(([v, l, sub]) => `<button class="pill" data-act="kf" data-key="${key}" data-v="${v}" aria-pressed="${f[key] === v}">${l}${sub ? `<small>${sub}</small>` : ""}</button>`).join("")}</div>`;
+  const h = heatOf(kfToKitchen(f)), n = Store.recipes().length;
   return `<div class="wrap stack" style="padding-block:6px 0">
-    <header class="pagehead"><h1>My <em>kitchen</em></h1><p>Every recipe gets written for this.</p></header>
-    <section class="panel"><dl class="sum">
-      <div><dt>Appliances</dt><dd>${apps.length ? apps.map(a => `<span style="display:block">${esc(a.name)}${a.uses ? `<small>${esc(a.uses)}</small>` : ""}</span>`).join("") : "Just the hob and oven"}</dd></div>
-      <div><dt>Hob</dt><dd>${esc(hobDesc(k) || "Not set")}${h.numbered ? `<div class="heat tnum"><span>Low <b>${esc(h.low)}</b></span><span>Medium <b>${esc(h.medium)}</b></span><span>High <b>${esc(h.high)}</b></span></div>` : `<small>No numbers, so recipes say low, medium or high heat</small>`}</dd></div>
-      <div><dt>Oven</dt><dd>${esc(OVENS[ovenType(k)])}</dd></div>
-      <div><dt>Measurements</dt><dd>${u.weight === "oz" ? "Ounces" : "Grams"}, ${u.liquid === "cup" ? "cups" : "millilitres"}${u.spoons ? ", teaspoons and tablespoons" : ""}</dd></div>
-      <div><dt>Usually cooking for</dt><dd class="tnum">${k.people} ${k.people === 1 ? "person" : "people"}</dd></div>
-      <div><dt>Avoid</dt><dd>${esc(k.avoid || "Nothing")}</dd></div>
-    </dl></section>
-    <button class="btn block" data-act="kq-review">${I.edit} Change something</button>
-    <button class="btn ghost" data-act="kreset-ask" style="align-self:center">Start again from scratch</button>
+    <header class="pagehead"><h1>My <em>kitchen</em></h1><p>Tap your answers. Recipes get written for what you have, like “fry on 6”.</p></header>
+    <section class="kq"><h3>Your hob</h3>${one("hobType", [["gas", "Gas", "real flames"], ["induction", "Induction", "flat black glass"], ["electric", "Electric", "glass or rings that glow"]])}</section>
+    <section class="kq"><h3>Does the hob have numbers?</h3>${one("dial", [["n6", "1 to 6"], ["n9", "1 to 9"], ["n12", "1 to 12"], ["none", "No numbers"]])}
+      ${/^n\d+$/.test(f.dial) ? `<p class="hint tnum">Recipes will say low = ${esc(h.low)}, medium = ${esc(h.medium)}, high = ${esc(h.high)}.</p>` : ""}</section>
+    <section class="kq"><h3>Your oven</h3>${one("ovenType", [["fan", "Fan oven"], ["conventional", "Normal", "no fan"], ["gas", "Gas oven"], ["none", "No oven"]])}</section>
+    <section class="kq"><h3>What else do you have?</h3><p class="hint">Tap all that apply.</p>
+      <div class="pills">${GADGETS.map(g => `<button class="pill" data-act="kf-gadget" data-v="${g}" aria-pressed="${f.gadgets.includes(g)}">${g}</button>`).join("")}</div>
+      <input class="input" id="kf-other" value="${esc(f.other)}" placeholder="Anything else? e.g. Ninja Speedi" autocomplete="off"></section>
+    <section class="kq"><h3>Cooking for</h3><div class="serv" style="padding:6px 6px 6px 16px"><span class="tnum" style="font-weight:700">${f.people} ${f.people === 1 ? "person" : "people"}</span><div class="ctl"><button data-act="kf-people" data-d="-1" aria-label="Fewer">−</button><button data-act="kf-people" data-d="1" aria-label="More">+</button></div></div></section>
+    <section class="kq"><h3>Measurements</h3>${one("units", [["gms", "Grams + spoons"], ["gm", "Grams only"], ["us", "Cups"]])}</section>
+    <section class="kq"><h3>Anything you don't eat? <span class="muted" style="font-weight:500">(optional)</span></h3><input class="input" id="kf-avoid" value="${esc(f.avoid)}" placeholder="e.g. nuts, mushrooms" autocomplete="off"></section>
+    <div class="savebar"><button class="btn primary block" data-act="kf-save">${k.setup ? "Save changes" : "Save my kitchen"}</button></div>
+    ${k.setup && n ? `<section class="panel"><b>Update my recipes</b><p class="hint">Rewrite all ${n} recipe${n === 1 ? "" : "s"} for this kitchen. The dishes stay the same.</p><button class="btn block" data-act="update-all-ask">${I.magic} Update all ${n}</button></section>` : ""}
     <section class="panel" id="creditpanel" hidden></section>
-    <section class="panel"><b>Your recipe book</b><p class="hint">Your recipes are saved online and linked to this phone. To open them on another phone or tablet, get a code.</p>
-      <div class="btnrow"><button class="btn" data-act="link-show">Use on another phone</button><button class="btn" data-act="link-enter">I have a code</button></div>
-      <button class="btn ghost" data-act="backup-pick" style="align-self:flex-start">Import a backup file</button></section>
-    ${n ? `<section class="panel"><b>Update my recipes</b><p class="hint">Rewrite the method of all ${n} recipe${n === 1 ? "" : "s"} for this kitchen: your hob numbers, oven, appliances and measurements. The dishes stay the same.</p><button class="btn primary block" data-act="update-all-ask">${I.magic} Update all ${n} recipe${n === 1 ? "" : "s"}</button></section>` : ""}
+    <section class="panel"><b>Your account</b><p class="hint">Signed in as <b>${esc(S.user || "")}</b>. Sign in with the same username on any phone to see your recipes.</p>
+      <div class="btnrow"><button class="btn" data-act="backup-pick">Import a backup</button><button class="btn" data-act="signout">Sign out</button></div></section>
   </div>`;
 }
 function normProfile(o) {
@@ -932,25 +785,20 @@ function normProfile(o) {
   };
 }
 async function saveKitchen() {
-  const a = S.q.a, base = draftKitchen();
-  if (AI.fn && (S.q.stale || !S.q.profile)) {
-    const prompt = `You're setting up a cooking app's kitchen profile from someone's answers. Work out what their equipment can do so recipes can be written for it.
-ANSWERS:
-- Appliances besides hob and oven, in their words: "${base.appliancesText || "none"}"
-- Hob type: ${HOBS[base.hobType]}${base.hobModel ? " (" + base.hobModel + ")" : ""}
-- How they set hob heat: ${a.dial === "numbers" ? "numbers 1 to " + a.max : a.dial === "none" ? "no numbers" : "not sure"}
-Reply with ONLY this JSON:
-{"appliances": [{"name": "short name, e.g. Ninja Speedi", "uses": "what it can do, under 12 words"}],
- "hob": "short plain description, e.g. Induction hob, 1 to 9",
- "heat": {"numbered": true or false, "low": "", "mediumLow": "", "medium": "", "mediumHigh": "", "high": ""}}
-Rules: one entry per separate machine they mention (a multi-cooker is ONE entry listing everything it does; a "Ninja Speedi" air fries, steams, bakes, slow cooks and makes one-pot "rapid" meals with grains and protein together). Recognise brand and model names; if unsure what something is, give your best guess. Empty list if they have none. For numbers, each heat value is just the number to use, as text (e.g. "3"), chosen for that type of hob (induction gets hot fast, so medium sits lower). With no numbers or not sure, use short words like "low flame" or "medium heat" and set numbered to false.`;
-    const prof = await runAI("kitchen", "Saving your kitchen", (signal, onStart) => AI.fn.json(prompt, { signal, onText: onStart, modelTier: "quick", cache: false }).then(normProfile));
-    if (prof) base.profile = prof;
-  }
-  if (base.profile && base.profile.heat && base.dial !== "numbers") base.profile.heat.numbered = false;
-  const first = !Store.kitchen().setup;
-  Store.put("kitchen", base); S.q = null; S.kdText = ""; render(); window.scrollTo(0, 0);
-  toast(first ? "Kitchen saved. New recipes will be written for it." : "Kitchen updated");
+  const f = S.kf, base = kfToKitchen(f, null);
+  if (!f.hobType || !f.ovenType) { toast("Tap your hob and oven first."); return; }
+  if (!f.dial) base.dial = f.hobType === "gas" ? "none" : "unsure";
+  const old = Store.kitchen();
+  const needProfile = base.appliancesText && (base.appliancesText !== old.appliancesText || !old.profile);
+  if (needProfile) {
+    const prompt = `List what each kitchen appliance can do, for a cooking app. Appliances, in the person's words: "${base.appliancesText}"
+Reply with ONLY this JSON: {"appliances": [{"name": "short name, e.g. Ninja Speedi", "uses": "what it can do, under 12 words"}]}
+One entry per separate machine; a multi-cooker is ONE entry listing everything it does (a "Ninja Speedi" air fries, steams, bakes, slow cooks and makes one-pot "rapid" meals). Recognise brand names; if unsure, give your best guess.`;
+    const prof = await runAI("kitchen", "Saving your kitchen", (signal, onStart) => AI.fn.json(prompt, { signal, onText: onStart }).then(normProfile));
+    base.profile = prof ? { appliances: prof.appliances, hob: "", heat: null } : null;
+  } else if (old.profile && old.profile.appliances) base.profile = { appliances: old.profile.appliances, hob: "", heat: null };
+  Store.put("kitchen", base); S.kf = kitchenForm(base); render();
+  toast(old.setup ? "Kitchen updated" : "Kitchen saved. New recipes will be written for it.");
 }
 async function updateAll() {
   const rs = Store.recipes();
@@ -1004,7 +852,7 @@ function previewSheet(nr, origId) {
 function editSheet(r) {
   const isNew = !r;
   r = r || { title: "", description: "", category: "dinner", servings: Store.kitchen().people || 2, prepMinutes: null, cookMinutes: null, ingredients: [], steps: [], photo: "" };
-  S.sheet = { kind: "edit", id: isNew ? null : r.id, cat: catOf(r), photo: r.photo || "" };
+  S.sheet = { kind: "edit", id: isNew ? null : r.id, cat: catOf(r), photo: r.photo || r.photoUrl || "" };
   let g = "";
   const ingText = r.ingredients.map(i => { let p = ""; if (i.group && i.group !== g) { g = i.group; p = "# " + i.group + "\n"; } return p + ingLine(i); }).join("\n");
   openSheet(`<h2>${isNew ? "Write a recipe" : "Edit recipe"}</h2>
@@ -1018,6 +866,7 @@ function editSheet(r) {
     </div>
     <div class="field"><label for="e-ings">Ingredients <span class="muted">(one per line)</span></label><textarea class="input" id="e-ings" rows="7" placeholder="200 g spaghetti&#10;2 garlic cloves, sliced&#10;1 tbsp olive oil">${esc(ingText)}</textarea><span class="hint">Start a line with # for a section, like “# For the sauce”.</span></div>
     <div class="field"><label for="e-steps">Method <span class="muted">(one step per line)</span></label><textarea class="input" id="e-steps" rows="7" placeholder="Boil the pasta for 10 minutes.">${esc(r.steps.map(s => s.text).join("\n"))}</textarea><span class="hint">Mention a time like “10 minutes” and that step gets a timer button.</span></div>
+    <label class="checkrow"><input type="checkbox" id="e-public" ${r.private || (r.source && (r.source.kind === "library" || r.source.kind === "friend")) ? "" : "checked"} ${r.source && (r.source.kind === "library" || r.source.kind === "friend") ? "disabled" : ""}><span><b>Show in the recipe library</b><small>${r.source && (r.source.kind === "library" || r.source.kind === "friend") ? "This came from someone else, so it stays out of the library." : "Other people can find it and add it to their book."}</small></span></label>
     <div class="btnrow"><button class="btn" data-act="sheet-close">Cancel</button><button class="btn primary" data-act="edit-save">Save</button></div>`);
 }
 function saveEdit() {
@@ -1033,7 +882,8 @@ function saveEdit() {
   });
   const n = v => { const x = Number(v); return isFinite(x) && x > 0 ? Math.round(x) : null; };
   const rec = Object.assign({}, old || { type: "recipe", createdAt: Date.now(), source: { kind: "manual", label: "Written by hand" }, fav: false, tips: "", tags: [], description: "" }, {
-    title, category: S.sheet.cat, photo: S.sheet.photo || "", servings: n($("#e-serv").value) || 1, prepMinutes: n($("#e-prep").value), cookMinutes: n($("#e-cook").value), ingredients, steps
+    title, category: S.sheet.cat, photo: /^data:/.test(S.sheet.photo || "") ? S.sheet.photo : "", photoUrl: /^https?:/.test(S.sheet.photo || "") ? S.sheet.photo : "",
+    private: !$("#e-public").checked, servings: n($("#e-serv").value) || 1, prepMinutes: n($("#e-prep").value), cookMinutes: n($("#e-cook").value), ingredients, steps
   });
     const id = old ? old.id : newId();
   Store.put(id, rec); closeSheet();
@@ -1047,7 +897,14 @@ function saveNewRecipe(rec, sourceLabel, kind, extra) {
   Store.put(id, body);
   S.tab = "recipes"; S.openId = id; render(); window.scrollTo(0, 0);
   Wake.set(true); toast("Added to your recipes");
+  if (!body.photo && !body.photoUrl) findPhoto(id, body.photoQuery || body.title, true);
   return id;
+}
+async function findPhoto(id, q, quiet) {
+  let p; try { p = await api("GET", "/api/photo?q=" + encodeURIComponent(q || "")); } catch { if (!quiet) toast("Couldn't find a photo for this one. You can add your own with the pencil."); return; }
+  const r = Store.get(id); if (!r || r.photo || r.photoUrl) return;
+  Store.put(id, Object.assign({}, r, { photoUrl: p.url, photoCredit: p.credit, photoLink: p.link }));
+  if (!quiet) toast("Photo added");
 }
 
 /* ---------- sharing ---------- */
@@ -1246,7 +1103,7 @@ const keepNote = () => { const n = $("#addnote"); if (n) S.note = n.value; };
 const A = {
   tab(t) {
     S.tab = t.dataset.tab; S.openId = null; S.selecting = false; S.selected.clear(); Wake.set(false);
-    if (S.tab !== "kitchen") S.q = null;
+    S.kf = null;
     closeSheet(); render(); window.scrollTo(0, 0);
   },
   open(t) {
@@ -1267,10 +1124,15 @@ const A = {
     const link = APP_URL + "#get-" + code;
     S.sheet.link = link; S.sheet.code = code;
     $("#sharebody").innerHTML = `<div class="sharebox"><span class="label">Send them this link</span><span class="linkline">${esc(link)}</span>
-      <button class="btn primary block" data-act="copy-link">${I.copy} Copy link</button>
-      <span class="hint" style="text-align:center">or they can type this code in Add → Get recipes from someone</span><span class="code">${code}</span></div>
-      <p class="hint">When they open the link, the app opens with the recipes ready to add. No sign-up needed.</p><button class="btn block" data-act="sheet-close">Done</button>`;
+      <button class="btn primary block" data-act="send-link">${I.share} Send</button>
+      <span class="hint" style="text-align:center">In their app they tap <b>+ → Get recipes from someone</b> and type:</span><span class="code">${code}</span></div>
+      <p class="hint">The message has the code and a link, so it works whether or not they have the app yet.</p><button class="btn block" data-act="sheet-close">Done</button>`;
     if (S.selecting) { S.selecting = false; S.selected.clear(); render(); }
+  },
+  async "send-link"() {
+    const text = `I shared recipes with you on recipe thing. In the app, tap + then "Get recipes from someone" and type ${S.sheet.code}. Or open:`;
+    if (navigator.share) { try { await navigator.share({ title: "Recipes for you", text, url: S.sheet.link }); return; } catch (e) { if (e && e.name === "AbortError") return; } }
+    navigator.clipboard.writeText(text + " " + S.sheet.link).then(() => toast("Copied. Paste it into a message.")).catch(() => toast("Couldn't copy here. Press and hold the link to copy it."));
   },
   "copy-link"() { navigator.clipboard.writeText(S.sheet.link).then(() => toast("Link copied. Paste it into a message.")).catch(() => toast("Couldn't copy here. Press and hold the link to copy it.")); },
   "get-friend"() { friendSheet(); },
@@ -1288,12 +1150,6 @@ const A = {
       <div class="btnrow"><button class="btn" data-act="sheet-close">Not now</button><button class="btn primary" data-act="update-all-go">${I.magic} Update</button></div>`);
   },
   "update-all-go"() { closeSheet(); updateAll(); },
-  "kq-add"(t) {
-    const ta = $("#kq-appliancesText"), v = t.dataset.v, cur = ta.value.trim();
-    if (new RegExp("\\b" + v + "\\b", "i").test(cur)) return;
-    ta.value = cur ? cur.replace(/[.,\s]*$/, "") + ", " + v.toLowerCase() : v;
-    S.q.a.appliancesText = ta.value; S.q.stale = true; t.setAttribute("aria-pressed", "true");
-  },
   "share-one"() { const r = Store.get(S.openId); if (r) shareSheet([r]); },
   "share-copy"() {
     const rs = S.sheet.ids.map(id => Store.get(id)).filter(Boolean), txt = shareText(rs);
@@ -1374,14 +1230,14 @@ const A = {
     if (stripped.length < 40 && link) {
       const note = S.note; closeSheet();
       let host = ""; try { host = new URL(link).hostname.replace(/^www\./, ""); } catch {}
-      let pageUrl = link;
+      let pageUrl = link, pageImg = "";
       const nr = await runAI("import", "From " + (host || "the link"), async (signal, onStart) => {
         const page = await api("POST", "/api/fetch-url", { url: link });
         if (signal.aborted) throw { code: "cancelled" };
-        pageUrl = page.url || link;
+        pageUrl = page.url || link; pageImg = page.image || "";
         return aiRecipe({ task: `Extract the recipe from this ${page.structured ? "recipe data taken from a web page" : "web page or video description"}. Ignore adverts, life stories, comments and links. Copy amounts faithfully. If it's a video with no written amounts, use sensible amounts and say so in tips.${stripped ? " The person also wrote: " + stripped : ""}`, content: (page.title ? "Page title: " + page.title + "\n\n" : "") + page.text, extra: note }, signal, onStart);
       });
-      if (nr) { S.note = ""; saveNewRecipe(nr, host || "Link", "link", { url: pageUrl }); } else pasteSheet(txt);
+      if (nr) { S.note = ""; if (pageImg) nr.photoUrl = pageImg; saveNewRecipe(nr, host || "Link", "link", { url: pageUrl }); } else pasteSheet(txt);
       return;
     }
     if (stripped.length < 40) { toast("That's a bit short. Paste the whole recipe, or a link to it.", 4500); return; }
@@ -1403,42 +1259,19 @@ const A = {
     const nr = await runAI("import", "Saving from Ask", (signal, onStart) => aiRecipe({ task: "Turn this recipe suggestion into a full recipe. Keep its ingredients and method.", content: m.content }, signal, onStart));
     if (nr) saveNewRecipe(nr, "Ask", "ai");
   },
-  "kq-start"() { startQuestions(); },
-  "kq-fill"(t) { S.q.a[t.dataset.key] = t.dataset.v; render(); },
-  "kq-pick"(t) { const key = t.dataset.key, v = t.dataset.v; S.q.a[key] = key === "max" ? Number(v) : key === "spoons" ? v === "true" : v; if (STALE_KEYS.includes(key)) S.q.stale = true; render(); },
-  "kq-people"(t) { S.q.a.people = Math.max(1, Math.min(20, S.q.a.people + Number(t.dataset.d))); render(); },
-  "kq-back"() {
-    const q = S.q;
-    if (q.mode === "edit") { q.a = q.snap; q.stale = q.snapStale; q.view = "review"; q.mode = "review"; }
-    else if (q.i > 0) q.i--;
-    else if (q.mode === "follow") { S.q = null; }
-    else S.q = null;
-    render(); window.scrollTo(0, 0);
-  },
-  "kq-next"() {
-    const q = S.q;
-    if (q.mode === "edit" || q.i >= q.steps.length - 1) { q.view = "review"; q.mode = "review"; }
-    else q.i++;
-    render(); window.scrollTo(0, 0);
-  },
-  "kq-edit"(t) { const q = S.q; q.snap = clone(q.a); q.snapStale = q.stale; q.mode = "edit"; q.view = "step"; q.steps = [Number(t.dataset.step)]; q.i = 0; render(); window.scrollTo(0, 0); },
-  "kq-review"() { startReview(); },
-  "link-show"(t) { showLinkCode(t); },
-  "link-enter"() { enterCodeSheet(); },
-  "link-go"() { useLinkCode(); },
+  kf(t) { S.kf[t.dataset.key] = t.dataset.v; render(); },
+  "kf-gadget"(t) { const g = t.dataset.v, f = S.kf; f.gadgets = f.gadgets.includes(g) ? f.gadgets.filter(x => x !== g) : [...f.gadgets, g]; t.setAttribute("aria-pressed", String(f.gadgets.includes(g))); },
+  "kf-people"(t) { S.kf.people = Math.max(1, Math.min(20, S.kf.people + Number(t.dataset.d))); render(); },
+  "kf-save"() { saveKitchen(); },
   "backup-pick"() { $("#f-backup").click(); },
-  "kreset-ask"() { S.sheet = { kind: "kreset" }; openSheet(`<h2>Start your kitchen again?</h2><p class="muted">This clears your kitchen answers so you can describe it from scratch. Your recipes stay exactly as they are.</p><div class="btnrow"><button class="btn" data-act="sheet-close">Keep it</button><button class="btn primary" data-act="kreset-go">Start again</button></div>`); },
-  "kreset-go"() { closeSheet(); Store.put("kitchen", Object.assign({}, DEFAULT_KITCHEN)); S.q = null; S.kc = null; S.kdText = ""; render(); window.scrollTo(0, 0); },
-  "kq-cancel"() { S.q = null; render(); window.scrollTo(0, 0); },
-  "kq-save"() { saveKitchen(); },
-  "kc-tog"(t) {
-    const c = S.kc, v = t.dataset.v; c.picks = c.picks.includes(v) ? c.picks.filter(x => x !== v) : [...c.picks, v];
-    t.setAttribute("aria-pressed", String(c.picks.includes(v)));
-    const kin = $("#kin"); const typed = kin.value.split(",").map(x => x.trim()).filter(x => x && !KQ.appliances.chips.includes(x));
-    kin.value = [...c.picks, ...typed].join(", ");
-  },
-  "kc-send"(t) { kcAnswer(t.dataset.t, t.dataset.v); },
-  "kd-go"() { if (!AI.fn) { startQuestions(); return; } describeKitchen(); }
+  "auth-toggle"() { S.authMode = S.authMode === "signup" ? "login" : "signup"; render(); },
+  "landing-go"() { S.landing = null; render(); },
+  signout() { signOut(); },
+  "open-library"() { S.tab = "library"; S.lib = S.lib || { q: "", cat: "", results: null }; render(); window.scrollTo(0, 0); loadLibrary(); },
+  "lib-cat"(t) { S.lib.cat = t.dataset.f; S.lib.results = null; render(); loadLibrary(); },
+  "lib-open"(t) { openLibRecipe(t.dataset.id); },
+  "lib-add"() { const { recipe, author } = S.sheet; closeSheet(); const c = clone(recipe); delete c.private; saveNewRecipe(c, author ? "@" + author : "the recipe library", "library"); },
+  "find-photo"(t) { t.disabled = true; const r = Store.get(S.openId) || {}; findPhoto(S.openId, r.photoQuery || r.title, false); }
 };
 document.addEventListener("click", e => {
   const t = e.target.closest("[data-act]"); if (!t) return;
@@ -1461,13 +1294,13 @@ document.addEventListener("change", async e => {
 document.addEventListener("input", e => {
   const t = e.target;
   if (t.id === "q") { S.search = t.value; $("#grid").innerHTML = gridHtml(); }
+  else if (t.id === "libq") { S.lib.q = t.value; clearTimeout(libT); libT = setTimeout(loadLibrary, 350); }
   else if (t.id === "chatin" || t.id === "kin") { t.style.height = "auto"; t.style.height = Math.min(120, t.scrollHeight) + "px"; }
-  else if (S.q && /^kq-/.test(t.id)) { const key = t.id.slice(3); S.q.a[key] = t.value; if (STALE_KEYS.includes(key)) S.q.stale = true; }
-  else if (t.id === "kd-text") S.kdText = t.value;
+  else if (S.kf && (t.id === "kf-other" || t.id === "kf-avoid")) S.kf[t.id.slice(3)] = t.value;
 });
 document.addEventListener("submit", e => {
   e.preventDefault();
-  if (e.target.id === "kform") { kcAnswer($("#kin").value); return; }
+  if (e.target.id === "authform") { doAuth(); return; }
   if (e.target.id === "chatform") { if (S.chatBusy) { chatCtl && chatCtl.abort(); return; } sendChat($("#chatin").value); }
 });
 document.addEventListener("keydown", e => {
@@ -1478,31 +1311,82 @@ document.addEventListener("keydown", e => {
     if (e.key === "ArrowLeft" && S.cook.step > 0) { S.cook.step--; renderCook(); }
   }
   if (e.key === "Enter" && e.target.id === "friendcode") { e.preventDefault(); A["friend-go"](); }
-  if (e.key === "Enter" && e.target.id === "linkcode") { e.preventDefault(); useLinkCode(); }
   if (e.key === "Enter" && !e.shiftKey && e.target.id === "kin") { e.preventDefault(); kcAnswer(e.target.value); }
   if (e.key === "Enter" && !e.shiftKey && e.target.id === "chatin" && matchMedia("(pointer:fine)").matches) { e.preventDefault(); sendChat(e.target.value); }
-  if (e.key === "Enter" && S.q && /^kq-/.test(e.target.id) && e.target.tagName === "INPUT") { e.preventDefault(); e.target.blur(); A["kq-next"](); }
+  if (e.key === "Enter" && /^kf-/.test(e.target.id)) { e.preventDefault(); e.target.blur(); }
 });
 window.addEventListener("scroll", () => $("#top").classList.toggle("scrolled", window.scrollY > 4), { passive: true });
 
-/* ---------- your recipe book (no accounts: this phone holds a private key) ---------- */
-async function boot() {
-  S.user = null; render();
-  try { const me = await api("GET", "/api/me"); signedIn(me.username); return; }
-  catch (e) {
-    if (e.code === "offline") { const last = lsGet("rt-last-user"); if (last) { S.user = last; render(); Store.load(); return; } toast("You seem to be offline. Check your connection.", 5000); return; }
-  }
-  try { await api("POST", "/api/start", {}); const me = await api("GET", "/api/me"); signedIn(me.username); }
-  catch (e) { toast(e.message || "Couldn't open your recipe book. Try again.", 6000); }
+/* ---------- welcome, accounts and shared links ---------- */
+const shareCodeInHash = () => (String(location.hash || "").match(/^#get-([A-Za-z0-9]{6})$/) || [])[1] || "";
+function viewAuth() {
+  const signup = S.authMode === "signup", keep = S.anonCount;
+  const w = (icon, b, t) => `<li><span class="i">${icon}</span><span><b>${b}</b> ${t}</span></li>`;
+  return `<div class="auth">
+    <div class="authlogo">${I.logo}</div>
+    <h1 class="authname">recipe thing<i class="wdot"></i></h1>
+    ${signup ? `<p class="authtag">Your recipes in one place, written for your kitchen.</p>
+    <ul class="ways">${w(I.camera, "Add recipes", "from a photo, PDF, link or text")}${w(I.magic, "Invent new ones", "with AI")}${w(I.play, "Cook step by step", "with timers and the screen kept on")}${w(I.search, "Find and share", "recipes with everyone using the app")}</ul>` : `<p class="authtag">Welcome back. Sign in to see your recipes.</p>`}
+    <form id="authform" class="stack" style="gap:12px" novalidate>
+      <h2 class="authh">${signup ? "Make your account" : "Sign in"}</h2>
+      ${keep && signup ? `<p class="hint">Your ${keep} recipe${keep === 1 ? "" : "s"} on this phone will be kept.</p>` : ""}
+      <div class="field"><label for="au-user">Username</label><input class="input" id="au-user" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="${signup ? "Pick one, e.g. luca" : ""}"></div>
+      <div class="field"><label for="au-pass">Password</label><input class="input" id="au-pass" type="password" autocomplete="${signup ? "new-password" : "current-password"}" placeholder="${signup ? "At least 6 letters or numbers" : ""}"></div>
+      <p class="autherr" id="autherr" role="alert"></p>
+      <button class="btn primary block" type="submit" id="au-go">${signup ? "Create account" : "Sign in"}</button>
+    </form>
+    <button class="btn ghost" data-act="auth-toggle">${signup ? "I already have an account" : "New here? Make an account"}</button>
+  </div>`;
 }
-function signedIn(name) {
-  S.user = name; lsSet("rt-last-user", name);
+function viewLanding() {
+  const L = S.landing, d = L.data, n = d.recipes.length;
+  return `<div class="auth">
+    <div class="authlogo">${I.logo}</div>
+    <h1 class="authname">${n === 1 ? "A recipe" : n + " recipes"} for you</h1>
+    <p class="authtag">${esc(d.sender || "Someone")} shared ${n === 1 ? "this" : "these"} with you on recipe thing.</p>
+    <ul class="pick">${d.recipes.slice(0, 8).map(r => `<li><label><span class="e">${esc(emojiOf(r) || "🍽️")}</span><span><b>${esc(r.title)}</b><small>${esc(CAT1[catOf(r)])}</small></span></label></li>`).join("")}</ul>
+    <div class="sharebox"><b style="text-align:center">Have the app on your phone?</b><span class="hint" style="text-align:center">Open it, tap <b>+</b>, then <b>Get recipes from someone</b>, and type:</span><span class="code">${esc(L.code)}</span></div>
+    <button class="btn primary block" data-act="landing-go">Open them here instead</button>
+    <p class="hint" style="text-align:center">To get the app: in Safari tap Share, then Add to Home Screen.</p>
+  </div>`;
+}
+async function doAuth() {
+  const btn = $("#au-go"), err = $("#autherr"), signup = S.authMode === "signup";
+  const body = { username: $("#au-user").value.trim(), password: $("#au-pass").value };
+  if (!body.username || !body.password) { err.textContent = "Fill in a username and password."; return; }
+  btn.disabled = true; err.textContent = "";
+  try {
+    let keep = [];
+    if (S.anon && !signup) { try { keep = (await api("GET", "/api/docs")).docs.filter(d => d.key !== "kitchen").map(d => d.data); } catch {} }
+    const r = await api("POST", S.anon && signup ? "/api/claim" : signup ? "/api/signup" : "/api/login", body);
+    lsSet("rt-has-account", 1); S.anon = false;
+    if (document.activeElement) document.activeElement.blur();
+    await signedIn(r.username);
+    if (keep.length) { keep.forEach(d => Store.put(newId(), d)); toast(`Added your ${keep.length} recipe${keep.length === 1 ? "" : "s"} from this phone`); }
+    else if (signup) toast("Welcome! Your recipe book is ready.");
+  } catch (e) { err.textContent = e.message || "Couldn't sign in. Try again."; btn.disabled = false; }
+}
+async function boot() {
+  S.booting = true; S.user = null; render();
+  const code = shareCodeInHash();
+  let me = null;
+  try { me = await api("GET", "/api/me"); }
+  catch (e) {
+    if (e.code === "offline") { const last = lsGet("rt-last-user"); S.booting = false; if (last) { S.user = last; render(); Store.load(); } else { render(); toast("You seem to be offline. Check your connection.", 5000); } return; }
+  }
+  if (me && !me.anonymous) { S.booting = false; signedIn(me.username); return; }
+  if (me && me.anonymous) { S.anon = true; try { S.anonCount = (await api("GET", "/api/docs")).docs.filter(d => d.key !== "kitchen").length; } catch {} }
+  S.authMode = !S.anon && lsGet("rt-has-account") ? "login" : "signup";
+  if (code) { try { S.landing = { code, data: await api("GET", "/api/shares/" + code) }; } catch {} }
+  S.booting = false; render();
+}
+async function signedIn(name) {
+  S.user = name; S.landing = null; lsSet("rt-last-user", name);
   S.tab = "recipes"; S.openId = null;
   render(); window.scrollTo(0, 0);
-  Store.load().then(() => {
-    const m = String(location.hash || "").match(/^#get-([A-Za-z0-9]{6})$/);
-    if (m) { try { history.replaceState(null, "", location.pathname); } catch {} setTimeout(() => openReceive(m[1]), 300); }
-  });
+  await Store.load();
+  const code = shareCodeInHash();
+  if (code) { try { history.replaceState(null, "", location.pathname); } catch {} setTimeout(() => openReceive(code), 300); }
 }
 let rebooting = false;
 function onSignedOut() {
@@ -1510,37 +1394,12 @@ function onSignedOut() {
   rebooting = true; closeSheet(); S.cook = null; renderCook();
   boot().finally(() => { rebooting = false; });
 }
-async function showLinkCode(t) {
-  t.disabled = true;
-  let code; try { code = (await api("POST", "/api/link-code", {})).code; } catch (e) { t.disabled = false; toast(e.message); return; }
-  t.disabled = false; S.sheet = { kind: "linkcode" };
-  openSheet(`<h2>Use your recipes on another phone</h2>
-    <div class="sharebox"><span class="hint" style="text-align:center">On the other phone or tablet, open the app and tap <b>I have a code</b>, then type:</span><span class="code">${code}</span><span class="hint" style="text-align:center">The code works for 1 hour.</span></div>
-    <p class="hint">Both phones then share the same recipe book. Anything added on one shows up on the other.</p>
-    <button class="btn block" data-act="sheet-close">Done</button>`);
-}
-function enterCodeSheet() {
-  S.sheet = { kind: "entercode" };
-  openSheet(`<h2>I have a code</h2><p class="hint">On the phone that already has your recipes, open the app, go to <b>Kitchen</b> and tap <b>Use on another phone</b>. Type the code it shows here.</p>
-    <input class="input tnum" id="linkcode" placeholder="e.g. K7P2QX" autocomplete="off" autocapitalize="characters" maxlength="8" style="font-size:22px;letter-spacing:.12em;text-align:center;font-weight:700">
-    <button class="btn primary block" data-act="link-go">Open my recipes</button>
-    <p class="hint">Anything already on this phone gets added to that recipe book too.</p>`);
-}
-async function useLinkCode() {
-  const code = ($("#linkcode").value || "").trim();
-  const keep = Store.recipes().map(clone), kitchen = Store.data.kitchen ? clone(Store.data.kitchen) : null;
-  const btn = $('[data-act="link-go"]'); if (btn) btn.disabled = true;
-  try { await api("POST", "/api/link", { code }); }
-  catch (e) { if (btn) btn.disabled = false; toast(e.message, 5000); return; }
-  closeSheet(); lsSet(Store.cacheKey(), null);
-  const me = await api("GET", "/api/me").catch(() => null);
-  if (!me) { boot(); return; }
-  S.user = me.username; lsSet("rt-last-user", me.username);
-  await Store.load();
-  keep.forEach(r => Store.put(newId(), r));
-  if (kitchen && kitchen.setup && !Store.kitchen().setup) Store.put("kitchen", kitchen);
-  S.tab = "recipes"; S.openId = null; render(); window.scrollTo(0, 0);
-  toast("Your recipes are here");
+async function signOut() {
+  try { await api("POST", "/api/logout", {}); } catch {}
+  lsSet(Store.cacheKey(), null); lsSet(LS_CHAT, []); lsSet("rt-last-user", null);
+  S.chat = []; S.kf = null; S.anon = false; S.anonCount = 0;
+  Store.data = { recipes: {}, kitchen: null }; Store.mode = "loading";
+  closeSheet(); S.user = null; S.authMode = "login"; render(); window.scrollTo(0, 0);
 }
 async function importBackup(file) {
   let data; try { data = JSON.parse(await file.text()); } catch { toast("That file isn't a recipe backup."); return; }

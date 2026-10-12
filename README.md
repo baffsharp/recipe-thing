@@ -25,8 +25,9 @@ cook step by step with timers, and share recipes with friends who use the app.
    - `ANTHROPIC_API_KEY` (type **Secret**): your Claude API key.
 5. Open the `…workers.dev` link it gives you and, on iPhone, tap **Share → Add to Home Screen**.
 
-There are no accounts: each phone gets its own recipe book automatically. To open the same book on
-another phone, go to **Kitchen → Use on another phone** for a code, then **I have a code** on the other phone.
+Everyone makes an account (username and password) the first time they open it. Recipes go into a shared
+**recipe library** that everyone can search, unless they untick "Show in the recipe library" on a recipe.
+Recipes can also be sent to someone with a 6-letter code.
 
 Every change pushed to the `main` branch on GitHub goes live by itself.
 
