@@ -44,6 +44,7 @@ export class Store extends DurableObject {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS docs (user_id TEXT NOT NULL, key TEXT NOT NULL, data TEXT NOT NULL, updated INTEGER NOT NULL, PRIMARY KEY (user_id, key))`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS shares (code TEXT PRIMARY KEY, user_id TEXT NOT NULL, data TEXT NOT NULL, created INTEGER NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS usage (user_id TEXT NOT NULL, day TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (user_id, day))`);
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS spend (id INTEGER PRIMARY KEY CHECK (id = 1), usd REAL NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS links (code TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires INTEGER NOT NULL)`);
     this.sql.exec(`CREATE TABLE IF NOT EXISTS attempts (username TEXT PRIMARY KEY, fails INTEGER NOT NULL, until INTEGER NOT NULL)`);
   }
@@ -130,6 +131,11 @@ export class Store extends DurableObject {
     const row = this.one(`SELECT s.data AS data, u.username AS sender FROM shares s JOIN users u ON u.id = s.user_id WHERE s.code = ?`, code);
     return row ? { data: row.data, sender: row.sender } : null;
   }
+  addSpend(usd) {
+    if (!(usd > 0)) return;
+    this.sql.exec(`INSERT INTO spend (id, usd) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET usd = usd + ?`, usd, usd);
+  }
+  getSpend() { const r = this.one(`SELECT usd FROM spend WHERE id = 1`); return r ? r.usd : 0; }
   useAI(userId, perUser, total) {
     const day = today();
     const mine = this.one(`SELECT count FROM usage WHERE user_id = ? AND day = ?`, userId, day);
@@ -142,7 +148,7 @@ export class Store extends DurableObject {
 }
 
 /* ---------------- AI (Claude Haiku via the Anthropic API) ---------------- */
-async function handleAI(req, env, user, stub) {
+async function handleAI(req, env, user, stub, ctx) {
   if (!env.ANTHROPIC_API_KEY) return fail("ai_not_configured", "The AI isn't set up yet. Add ANTHROPIC_API_KEY in Cloudflare.", 503);
   const body = await req.json().catch(() => null);
   if (!body || !Array.isArray(body.messages) || !body.messages.length) return fail("bad_request", "Nothing to send.");
@@ -177,8 +183,10 @@ async function handleAI(req, env, user, stub) {
   }
   // Turn Anthropic's event stream into plain text as it arrives.
   const enc = new TextEncoder(), dec = new TextDecoder();
-  let buf = "";
+  let buf = "", inTok = 0, outTok = 0;
+  const priceIn = Number(env.PRICE_IN_PER_MILLION) || 0.1, priceOut = Number(env.PRICE_OUT_PER_MILLION) || 0.5;
   const stream = new TransformStream({
+    flush() { ctx.waitUntil(stub.addSpend((inTok * priceIn + outTok * priceOut) / 1e6)); },
     transform(chunk, ctrl) {
       buf += dec.decode(chunk, { stream: true });
       let i;
@@ -189,6 +197,8 @@ async function handleAI(req, env, user, stub) {
         let ev; try { ev = JSON.parse(data); } catch { continue; }
         if (ev.type === "content_block_delta" && ev.delta && ev.delta.type === "text_delta") ctrl.enqueue(enc.encode(ev.delta.text));
         else if (ev.type === "error") ctrl.enqueue(enc.encode("\u0000ERROR"));
+        else if (ev.type === "message_start" && ev.message && ev.message.usage) { const u = ev.message.usage; inTok += (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0) + (u.cache_read_input_tokens || 0); outTok += u.output_tokens || 0; }
+        else if (ev.type === "message_delta" && ev.usage) outTok = Math.max(outTok, ev.usage.output_tokens || 0);
       }
     }
   });
@@ -266,7 +276,7 @@ async function handleFetchUrl(req) {
 /* ---------------- routes ---------------- */
 const USERNAME_RX = /^[a-z0-9_.-]{3,24}$/;
 const KEY_RX = /^[A-Za-z0-9_.:-]{1,80}$/;
-async function api(req, env, url) {
+async function api(req, env, url, ctx) {
   const stub = env.STORE.get(env.STORE.idFromName("main"));
   const path = url.pathname, method = req.method;
   if ((method === "POST" || method === "PUT") && !(req.headers.get("content-type") || "").includes("application/json")) return fail("bad_request", "Expected JSON.", 415);
@@ -351,17 +361,18 @@ async function api(req, env, url) {
     return json({ sender: r.sender, ...JSON.parse(r.data) });
   }
 
-  if (path === "/api/ai" && method === "POST") return handleAI(req, env, user, stub);
+  if (path === "/api/ai" && method === "POST") return handleAI(req, env, user, stub, ctx);
+  if (path === "/api/credit") return json({ spent: await stub.getSpend(), budget: Number(env.AI_BUDGET_USD) || 0 });
   if (path === "/api/fetch-url" && method === "POST") return handleFetchUrl(req);
 
   return fail("not_found", "Not found.", 404);
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
     if (!url.pathname.startsWith("/api/")) return env.ASSETS.fetch(req);
-    try { return await api(req, env, url); }
+    try { return await api(req, env, url, ctx); }
     catch (e) { console.log("API error", e && e.stack || e); return fail("server_error", "Something went wrong. Try again.", 500); }
   }
 };

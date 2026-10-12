@@ -414,3 +414,6 @@ textarea.input{resize:vertical;line-height:1.45}
 .splash{min-height:70vh;display:grid;place-items:center}
 .splash .lg{width:72px;height:72px;border-radius:20px;animation:pulse 1.4s ease-in-out infinite}
 .splash .lg b{font-size:40px}.splash .lg i{width:9px;height:9px;margin-bottom:19px}
+.meter{height:10px;border-radius:10px;background:var(--surface-2);overflow:hidden}
+.meter i{display:block;height:100%;background:var(--good);border-radius:10px}
+.meter.low i{background:var(--grad)}

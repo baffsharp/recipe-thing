@@ -515,6 +515,18 @@ function render() {
   else if (S.tab === "add") v.innerHTML = viewAdd();
   else v.innerHTML = viewKitchen();
   paintWake();
+  if ($("#creditpanel")) paintCredit();
+}
+let creditCache = null, creditAt = 0;
+async function paintCredit() {
+  if (!creditCache || Date.now() - creditAt > 30000) {
+    try { creditCache = await api("GET", "/api/credit"); creditAt = Date.now(); } catch { return; }
+  }
+  const el = $("#creditpanel"); if (!el || !creditCache.budget) return;
+  const { spent, budget } = creditCache, left = Math.max(0, budget - spent), pct = Math.min(100, (spent / budget) * 100), low = left < budget * 0.2;
+  el.hidden = false;
+  el.innerHTML = `<b>AI credit</b><div class="meter${low ? " low" : ""}" aria-hidden="true"><i style="width:${Math.max(2, pct)}%"></i></div>
+    <p class="hint tnum">$${spent.toFixed(2)} of $${budget.toFixed(2)} used${low ? ". Running low: top up at console.anthropic.com, then raise AI_BUDGET_USD in Cloudflare." : ", about $" + left.toFixed(2) + " left."}</p>`;
 }
 function renderTop() {
   const r = S.tab === "recipes" && S.openId ? Store.get(S.openId) : null;
@@ -903,6 +915,7 @@ function viewKitchen() {
     </dl></section>
     <button class="btn block" data-act="kq-review">${I.edit} Change something</button>
     <button class="btn ghost" data-act="kreset-ask" style="align-self:center">Start again from scratch</button>
+    <section class="panel" id="creditpanel" hidden></section>
     <section class="panel"><b>Your recipe book</b><p class="hint">Your recipes are saved online and linked to this phone. To open them on another phone or tablet, get a code.</p>
       <div class="btnrow"><button class="btn" data-act="link-show">Use on another phone</button><button class="btn" data-act="link-enter">I have a code</button></div>
       <button class="btn ghost" data-act="backup-pick" style="align-self:flex-start">Import a backup file</button></section>
